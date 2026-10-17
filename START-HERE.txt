@@ -1,4 +1,4 @@
-MineMakers 0.2.1 setup correction
+MineMakers 0.2.2 setup and Windows file-lock fix
 
 EXTRACT THE WHOLE ZIP before launching anything.
 
@@ -32,7 +32,10 @@ The helper creates desktop.frame. Minecraft creates overlay.bgra after capture i
 active. If neither appears, the overlay has not started; the old three frame files
 alone do not mean that the HUD overlay is running.
 
-If 0.2 is already installed, this release does not change Minecraft gameplay.
+0.2.2 retries temporary Windows file locks instead of stopping the overlay.
+Close the previous helper window before launching the new helper.
+
+If 0.2 or 0.2.1 is already installed, this release does not change Minecraft gameplay.
 You can use the new launcher/tools with the existing 0.2 JAR and Lua files.
-If installing the included 0.2.1 JAR, remove the older MineMakers JAR first.
+If installing the included 0.2.2 JAR, remove the older MineMakers JAR first.
 See docs/UPGRADE-0.2.md for the full setup and current limitations.

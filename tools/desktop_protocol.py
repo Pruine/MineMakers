@@ -2,6 +2,8 @@
 from dataclasses import dataclass
 import struct
 import uuid
+import os
+import time
 from pathlib import Path
 
 HEADER = struct.Struct('<4sIIIQQI64s')
@@ -77,3 +79,30 @@ def resolve_directory(path):
     if len(matches) > 1:
         raise ValueError('Both dynamic folders contain frames. Choose the exact folder used by the running Trailmakers mod.')
     raise ValueError('No trailmakers.frame found. Start the Trailmakers mod, then select its existing data_dynamic_willnotbeuploadedtoworkshop folder containing the frame files.')
+
+
+class FrameWriter:
+    """Keep atomic snapshots; Windows reader/AV locks retry on the next timer tick."""
+    def __init__(self, directory):
+        self.destination = Path(directory) / 'desktop.frame'
+        self.temporary = self.destination.with_name('desktop.frame.' + str(os.getpid()) + '.' + uuid.uuid4().hex + '.tmp')
+        self.blocked_since = None
+        self.last_error = None
+    def publish(self, text):
+        try:
+            self.temporary.write_text(text, encoding='utf-8', newline='\n')
+            os.replace(self.temporary, self.destination)
+        except PermissionError as error:
+            if self.blocked_since is None:
+                self.blocked_since = time.monotonic()
+            self.last_error = error
+            return False
+        self.blocked_since = None
+        self.last_error = None
+        return True
+    @property
+    def blocked_for(self):
+        return 0 if self.blocked_since is None else time.monotonic() - self.blocked_since
+    def close(self):
+        try: self.temporary.unlink(missing_ok=True)
+        except PermissionError: pass

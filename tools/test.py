@@ -6,8 +6,9 @@ import shutil
 import subprocess
 import tempfile
 import unittest
+from unittest.mock import patch
 import struct
-from desktop_protocol import HEADER, InputQueue, decode_overlay, resolve_directory
+from desktop_protocol import HEADER, InputQueue, decode_overlay, resolve_directory, FrameWriter
 from lupa.lua52 import LuaRuntime
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -86,6 +87,31 @@ class Tests(unittest.TestCase):
         self.assertTrue(test.visible)
         self.assertFalse(test.invincible)
         self.assertFalse(any(v.alive for _,v in test.spawns.items()))
+    def test_windows_locked_frame_recovery(self):
+        with tempfile.TemporaryDirectory() as temp:
+            destination=Path(temp)/'desktop.frame'
+            destination.write_text('previous complete frame')
+            writer=FrameWriter(temp)
+            queue=InputQueue()
+            queue.event('KEY',69,1,0)
+            with patch('desktop_protocol.os.replace',side_effect=PermissionError(13,'Access denied')):
+                self.assertFalse(writer.publish(queue.frame(True)))
+                self.assertFalse(writer.publish(queue.frame(True)))
+                self.assertEqual(destination.read_text(),'previous complete frame')
+                self.assertEqual(len(queue.events),1,'A blocked replacement must not discard unacknowledged input')
+                self.assertIsNotNone(writer.last_error)
+            self.assertTrue(writer.publish(queue.frame(True)))
+            decoded=self.wire.decode(destination.read_text())
+            self.assertEqual(decoded.sequence,3)
+            self.assertEqual(decoded.records[3][3],'KEY')
+            self.assertIsNone(writer.last_error)
+            self.assertEqual(writer.blocked_for,0)
+            other=FrameWriter(temp)
+            self.assertNotEqual(writer.temporary,other.temporary)
+            with patch('desktop_protocol.os.replace',side_effect=OSError(28,'Disk full')):
+                with self.assertRaises(OSError): writer.publish(queue.frame(True))
+            writer.close(); other.close()
+            self.assertFalse(writer.temporary.exists())
     def test_dynamic_folder_selection(self):
         with tempfile.TemporaryDirectory() as temp:
             root=Path(temp)

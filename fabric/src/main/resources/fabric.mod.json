@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 1, "id": "minemakers", "version": "0.2.1",
+  "schemaVersion": 1, "id": "minemakers", "version": "0.2.2",
   "name": "MineMakers", "description": "Experimental Minecraft Java / Trailmakers bridge",
   "environment": "*", "license": "MIT",
   "entrypoints": {"main": ["dev.minemakers.MineMakers"], "client": ["dev.minemakers.client.MineMakersClient"]},

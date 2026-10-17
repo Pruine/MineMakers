@@ -6,12 +6,13 @@ Trailmakers is the foreground window. No keyboard input is logged. Alt-Tab,
 Windows keys, and Alt-F4 release capture and remain available to Windows.
 """
 import argparse
+import hashlib
 import os
 from pathlib import Path
 import struct
 import sys
 import time
-from desktop_protocol import InputQueue, decode_overlay, resolve_directory
+from desktop_protocol import InputQueue, decode_overlay, resolve_directory, FrameWriter
 
 
 def run(directory, title):
@@ -65,14 +66,25 @@ def run(directory, title):
     api(user,'GetWindowThreadProcessId',w.DWORD,[w.HWND,c.POINTER(w.DWORD)])
     api(user,'ToUnicodeEx',c.c_int,[w.UINT,w.UINT,c.POINTER(c.c_ubyte),w.LPWSTR,c.c_int,w.UINT,w.HANDLE])
     api(kernel,'GetModuleHandleW',w.HINSTANCE,[w.LPCWSTR])
+    api(kernel,'CreateMutexW',w.HANDLE,[c.c_void_p,w.BOOL,w.LPCWSTR])
+    api(kernel,'GetLastError',w.DWORD,[])
+    api(kernel,'CloseHandle',w.BOOL,[w.HANDLE])
     api(gdi,'CreateCompatibleDC',w.HDC,[w.HDC]); api(gdi,'DeleteDC',w.BOOL,[w.HDC])
     api(gdi,'CreateDIBSection',w.HBITMAP,[w.HDC,c.POINTER(BI),w.UINT,c.POINTER(c.c_void_p),w.HANDLE,w.DWORD])
     api(gdi,'SelectObject',w.HANDLE,[w.HDC,w.HANDLE]); api(gdi,'DeleteObject',w.BOOL,[w.HANDLE])
     api(gdi,'StretchDIBits',c.c_int,[w.HDC,c.c_int,c.c_int,c.c_int,c.c_int,c.c_int,c.c_int,c.c_int,c.c_int,c.c_void_p,c.POINTER(BI),w.UINT,w.DWORD])
     api(gdi,'SetStretchBltMode',c.c_int,[w.HDC,c.c_int])
     q=InputQueue(); directory=resolve_directory(directory)
+    identity=hashlib.sha256(os.path.normcase(str(directory)).encode('utf-8')).hexdigest()
+    mutex=kernel.CreateMutexW(None,False,'Local\\MineMakersOverlay_'+identity)
+    mutex_error=kernel.GetLastError()
+    if not mutex: raise OSError('Cannot create overlay instance guard')
+    if mutex_error==183:
+        kernel.CloseHandle(mutex)
+        raise SystemExit('An overlay helper is already running for this folder. Close that helper window before starting another.')
+    writer=FrameWriter(directory)
     state={'armed':False,'capture':False,'target':None,'rect':None,'frame':None,'fresh':-100.0,
-           'mtime':None,'raw_seq':None,'failed':False,'vkeys':set(),'bitmap':None,'old':None,'bits':None,'size':None}
+           'mtime':None,'raw_seq':None,'failed':False,'vkeys':set(),'bitmap':None,'old':None,'bits':None,'size':None,'write_warning':False}
     dc=user.GetDC(None); mem=gdi.CreateCompatibleDC(dc)
     if not dc or not mem: raise OSError('Cannot create overlay device context')
     def foreground():
@@ -90,9 +102,14 @@ def run(directory, title):
         except BufferError as e:
             release(); state['armed']=False; print(str(e),flush=True)
     def write(active):
-        temp=directory/'desktop.frame.tmp'
-        temp.write_text(q.frame(active),encoding='utf-8',newline='\n')
-        os.replace(temp,directory/'desktop.frame')
+        success=writer.publish(q.frame(active))
+        if success:
+            if state['write_warning']: print('Frame writing recovered.',flush=True)
+            state['write_warning']=False
+        elif writer.blocked_for>=2 and not state['write_warning']:
+            print('Still waiting to replace '+str(writer.destination)+'. A reader may be holding it open, or it may be read-only. Close other helper instances; if this persists, check this file\'s permissions. No administrator elevation is required by the helper.',file=sys.stderr,flush=True)
+            state['write_warning']=True
+        return success
     def render(frame,rect):
         left,top,width,height=rect
         if state['size']!=(width,height):
@@ -251,6 +268,7 @@ def run(directory, title):
         release()
         try: write(False)
         except OSError: pass
+        writer.close(); kernel.CloseHandle(mutex)
         user.UnhookWindowsHookEx(kh); user.UnhookWindowsHookEx(mh); user.KillTimer(hwnd,1)
         if state['bitmap']: gdi.SelectObject(mem,state['old']); gdi.DeleteObject(state['bitmap'])
         gdi.DeleteDC(mem); user.ReleaseDC(None,dc); user.DestroyWindow(hwnd)

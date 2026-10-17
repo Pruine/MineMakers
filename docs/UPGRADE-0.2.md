@@ -12,10 +12,11 @@ framebuffer or forward a complete desktop mouse/keyboard stream on its own.
 
 ## Replace the old installation
 
-0.2.1 corrects setup instructions and adds a launcher/path validation. If 0.2 is
+0.2.2 keeps the setup corrections and retries Windows frame replacement when a
+reader briefly locks the file. Only one helper instance per folder is allowed. If 0.2 is
 already installed, its JAR and Lua can be used with these updated helper tools.
 
-1. Download `MineMakers-experimental-0.2.1.zip` from the repository's `downloads/`
+1. Download `MineMakers-experimental-0.2.2.zip` from the repository's `downloads/`
    directory. **You do not need to rebuild it.**
 2. If replacing the JAR, unlink the old bridge, exit both games, and remove the older
    MineMakers JAR from Minecraft's `mods` folder; keep only one MineMakers version. Copy the new JAR
@@ -75,3 +76,17 @@ Compilation, framing, acknowledgments and camera contracts are tested in the clo
 The actual Windows compositor and Trailmakers camera/input behavior remain unverified
 until exercised on the user's installed games. This update should not be described
 as a finished or fully tested full-Minecraft port.
+
+
+## Windows Access denied while replacing desktop.frame
+
+The helper now keeps the previous complete frame and retries on the next timer
+update when Windows denies replacement of an open file. It does not stop the
+overlay, rewrite the destination in place, or discard pending input. Each helper
+uses its own temporary filename; a named mutex prevents two helpers competing for
+the same frame folder. Existing Minecraft 0.2/0.2.1 JARs and Lua remain compatible.
+
+Close the previous helper window before starting the updated one. If denial lasts
+more than two seconds, the helper prints a separate persistent-lock/permissions
+message. An actual read-only file or ACL denial still needs correction; this fix
+cannot override filesystem permissions. The helper does not require elevation.
