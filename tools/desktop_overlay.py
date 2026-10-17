@@ -12,7 +12,7 @@ from pathlib import Path
 import struct
 import sys
 import time
-from desktop_protocol import InputQueue, decode_overlay, resolve_directory, FrameWriter
+from desktop_protocol import InputQueue, decode_overlay, resolve_directory, FrameWriter, TimerResolution
 
 
 def run(directory, title):
@@ -20,6 +20,7 @@ def run(directory, title):
     import ctypes as c
     from ctypes import wintypes as w
     user, gdi, kernel = c.windll.user32, c.windll.gdi32, c.windll.kernel32
+    winmm=c.windll.winmm
     # Use physical coordinates consistently on high-DPI desktops.
     try: user.SetProcessDpiAwarenessContext(c.c_void_p(-4))
     except (AttributeError, OSError): user.SetProcessDPIAware()
@@ -74,6 +75,8 @@ def run(directory, title):
     api(gdi,'SelectObject',w.HANDLE,[w.HDC,w.HANDLE]); api(gdi,'DeleteObject',w.BOOL,[w.HANDLE])
     api(gdi,'StretchDIBits',c.c_int,[w.HDC,c.c_int,c.c_int,c.c_int,c.c_int,c.c_int,c.c_int,c.c_int,c.c_int,c.c_void_p,c.POINTER(BI),w.UINT,w.DWORD])
     api(gdi,'SetStretchBltMode',c.c_int,[w.HDC,c.c_int])
+    api(winmm,'timeBeginPeriod',w.UINT,[w.UINT]); api(winmm,'timeEndPeriod',w.UINT,[w.UINT])
+    resolution=TimerResolution(winmm.timeBeginPeriod,winmm.timeEndPeriod)
     q=InputQueue(); directory=resolve_directory(directory)
     identity=hashlib.sha256(os.path.normcase(str(directory)).encode('utf-8')).hexdigest()
     mutex=kernel.CreateMutexW(None,False,'Local\\MineMakersOverlay_'+identity)
@@ -95,6 +98,7 @@ def run(directory, title):
         keys=state['vkeys']
         return (1 if keys & {16,160,161} else 0)|(2 if keys & {17,162,163} else 0)|(4 if keys & {18,164,165} else 0)
     def release():
+        resolution.set(False)
         state['capture']=False; q.reset(); state['vkeys'].clear()
         state['frame']=None; state['fresh']=-100.0; state['raw_seq']=None
     def emit(kind,*args):
@@ -139,6 +143,7 @@ def run(directory, title):
         user.ShowWindow(hwnd,4) # SW_SHOWNOACTIVATE
     def pulse():
         target=foreground(); state['target']=target
+        resolution.set(bool(state['armed'] and target))
         rect=None
         if target:
             r=w.RECT(); origin=w.POINT(0,0)

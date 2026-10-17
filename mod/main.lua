@@ -9,6 +9,16 @@ local lastUpdate=nil
 local bodyStatic=nil
 local oldRepair=nil
 local cameraError=''
+local sceneError=''
+local startupError=''
+local movementError=''
+local writeError=''
+local controlError='waiting for control.frame'
+local fileError='waiting for minecraft.frame'
+local issues={}
+local renderScene=nil
+local updateCount,statusSince=0,0
+local updateRate=0
 local lastCameraAttempt=-100
 tm.os.SetModTargetDeltaTime(C.updateInterval or 1/60)
 local anchor=nil
@@ -20,7 +30,7 @@ local session='tm_'..tostring(math.floor(tm.os.GetRealtimeSinceStartup()*1000)).
 local seq,lastMcSeq,lastEvent,hostEvent=0,-1,0,0
 local mcSession=nil
 local pending={}
-local lastRead,lastWrite,lastFresh=0,-100,-100
+local lastRead,nextWrite,lastFresh=0,-100,-100
 local player=nil
 local mcOrigin={x=0,y=0,z=0}
 local slot=0
@@ -29,7 +39,7 @@ local lookYaw=0
 local camera=false
 local cameraCreated=false
 local lastViewSeq=-1
-local lastViewRead=-100
+local nextViewRead=-100
 local lastScene=-100
 local lastStatus=-100
 local sceneRows={}
@@ -52,8 +62,18 @@ local function texture(name)
     if string.find(name,'planks',1,true) or string.find(name,'log',1,true) or string.find(name,'wood',1,true) then return 'wood' end
     return 'stone'
 end
+local function attempt(name,fn)
+    local ok,result=pcall(fn)
+    if ok then issues[name]=nil
+    else
+        local problem=tostring(result)
+        if issues[name]~=problem then tm.os.Log('MineMakers '..name..': '..problem) end
+        issues[name]=problem
+    end
+    return ok,result
+end
 local function cube(p,tex,scale,solid)
-    local o=tm.physics.SpawnCustomObjectRigidbody(world(p),'cube',tex,true,1,tm.enums.physicsMaterial.stone)
+    local o=tm.physics.SpawnCustomObjectRigidbody(world(p),'cube',tex,true,1,'Stone')
     if not o then error('Could not spawn MineMakers object') end
     o.GetTransform().SetScale(scale or 1)
     o.SetIsTrigger(not solid)
@@ -69,16 +89,10 @@ local function ray(origin,direction,distance)
 end
 local function applyView(p)
     if not linked or not p then return end
-    local bodyOk,bodyError=pcall(function()
-        -- The retained body must not run a second physics controller or intercept our rays.
-        local body=tm.players.GetPlayerGameObject(C.playerId)
-        if exists(body) then
-            body.SetIsStatic(true); body.SetIsTrigger(true); body.SetIsVisible(false)
-        end
+    attempt('native follow',function()
         local t=tm.players.GetPlayerTransform(C.playerId)
         t.SetPosition(world(p.pos)); t.SetRotation(V(0,p.yaw,0))
     end)
-    if not bodyOk then tm.os.Log('MineMakers native body: '..tostring(bodyError)) end
     if C.firstPerson==false then return end
     local eye=world(point(p.pos.x,p.pos.y+(p.eyeHeight or 1.62),p.pos.z))
     local yaw=p.yaw*math.pi/180; local pitchRad=p.pitch*math.pi/180
@@ -107,8 +121,8 @@ end
 local function cleanup()
     motion=nil; control=nil; controlFresh=-100; lastUpdate=nil; lastCameraAttempt=-100; anchor=nil; player=nil
     if cameraCreated then
-        tm.players.DeactivateCamera(C.playerId,0)
-        tm.players.RemoveCamera(C.playerId)
+        attempt('camera release',function() tm.players.DeactivateCamera(C.playerId,0) end)
+        attempt('camera removal',function() tm.players.RemoveCamera(C.playerId) end)
         camera=false; cameraCreated=false
     end
     for _,b in pairs(objects) do destroy(b.object) end
@@ -117,14 +131,18 @@ local function cleanup()
     objects,entities,avatar={},{},{}
     if linked then
         local body=tm.players.GetPlayerGameObject(C.playerId)
-        if exists(body) then body.SetIsStatic(bodyStatic or false); body.SetIsTrigger(false); body.SetIsVisible(true) end
-        if oldRepair~=nil then tm.players.SetRepairEnabled(C.playerId,oldRepair) end
-        tm.players.SetPlayerIsInvincible(C.playerId,false)
-        if oldBuilder~=nil then tm.players.SetBuilderEnabled(C.playerId,oldBuilder) end
+        if exists(body) then
+            attempt('restore body physics',function() body.SetIsStatic(bodyStatic or false) end)
+            attempt('restore body collision',function() body.SetIsTrigger(false) end)
+            attempt('restore body visibility',function() body.SetIsVisible(true) end)
+        end
+        if oldRepair~=nil then attempt('restore repair',function() tm.players.SetRepairEnabled(C.playerId,oldRepair) end) end
+        attempt('restore health mode',function() tm.players.SetPlayerIsInvincible(C.playerId,false) end)
+        if oldBuilder~=nil then attempt('restore builder',function() tm.players.SetBuilderEnabled(C.playerId,oldBuilder) end) end
         linked=false
     end
 end
-local function message(text) tm.playerUI.SetUIValue(C.playerId,'mm_status',text) end
+local function message(text) tm.playerUI.SetUIValue(C.playerId,'mm_status',string.sub(text,1,64)) end
 local function commit(rows,newSession)
     -- Validate all rows before changing any objects or executing an event.
     local p=nil; local blocks,es,events={},{},{}; local hotbar={}
@@ -163,14 +181,21 @@ local function commit(rows,newSession)
         anchor=point(q.x,q.y,q.z)
     end
     if not linked then
-        oldBuilder=tm.players.GetBuilderEnabled(C.playerId)
-        tm.players.SetBuilderEnabled(C.playerId,false)
-        oldRepair=tm.players.GetRepairEnabled(C.playerId)
-        tm.players.SetRepairEnabled(C.playerId,false)
-        if tm.players.IsPlayerInSeat(C.playerId) then tm.players.ForceExitSeat(C.playerId) end
+        local ok,value=attempt('builder state',function() return tm.players.GetBuilderEnabled(C.playerId) end)
+        oldBuilder=ok and value or nil
+        if ok then attempt('disable builder',function() tm.players.SetBuilderEnabled(C.playerId,false) end) end
+        ok,value=attempt('repair state',function() return tm.players.GetRepairEnabled(C.playerId) end)
+        oldRepair=ok and value or nil
+        if ok then attempt('disable repair',function() tm.players.SetRepairEnabled(C.playerId,false) end) end
+        attempt('exit seat',function() if tm.players.IsPlayerInSeat(C.playerId) then tm.players.ForceExitSeat(C.playerId) end end)
         local body=tm.players.GetPlayerGameObject(C.playerId)
-        if exists(body) then bodyStatic=body.GetIsStatic() end
-        if exists(body) then body.SetIsStatic(true); body.SetIsTrigger(true); body.SetIsVisible(false) end
+        if exists(body) then
+            ok,value=attempt('body state',function() return body.GetIsStatic() end)
+            bodyStatic=ok and value or false
+            attempt('freeze body',function() body.SetIsStatic(true) end)
+            attempt('body trigger',function() body.SetIsTrigger(true) end)
+            attempt('hide body',function() body.SetIsVisible(false) end)
+        end
         motion=Locomotion.new(point(0,0,0),ray)
         lastUpdate=tm.os.GetRealtimeSinceStartup()
         linked=true
@@ -179,11 +204,35 @@ local function commit(rows,newSession)
     p.pos=motion.pos
     player=p; if origin then mcOrigin=origin end
     local body=tm.players.GetPlayerGameObject(C.playerId)
-    if exists(body) then body.SetIsVisible(false) end
-    tm.players.SetPlayerIsInvincible(C.playerId,p.creative)
+    if exists(body) then attempt('hide body',function() body.SetIsVisible(false) end) end
+    attempt('health mode',function() tm.players.SetPlayerIsInvincible(C.playerId,p.creative) end)
     if not keys.j and not keys.l then lookYaw=p.yaw end
     if not keys.up and not keys.down then pitch=p.pitch end
 
+    attempt('events',function()
+        table.sort(events,function(a,b) return a.id<b.id end)
+        for _,e in ipairs(events) do
+            if e.id>lastEvent then
+                -- At-most-once effects, including retries after an engine force call fails.
+                lastEvent=e.id
+                if e.teleport then motion:teleport(e.teleport)
+                elseif e.push then motion.vx=motion.vx+e.push.x; motion.vy=motion.vy+e.push.y; motion.vz=motion.vz+e.push.z end
+                local b=e.target and nativeTargets[e.target]
+                if b and b.Exists() and not b.IsDead() then
+                    b.DoDamageAmount(math.max(0,math.min(100,e.damage))*C.nativeDamageScale,C.playerId,e.kind)
+                    local d=e.direction; local force=math.max(0,math.min(20,e.knockback))
+                    b.GetStructure().AddForce(-d.x*force,d.y*force,d.z*force,'Impulse')
+                end
+            end
+        end
+        if ack then for i=#pending,1,-1 do if pending[i][2]<=ack then table.remove(pending,i) end end end
+    end)
+    local ok,err=pcall(renderScene,p,blocks,es,events,ack,hotbar)
+    local problem=ok and '' or tostring(err)
+    if problem~=sceneError and not ok then tm.os.Log('MineMakers scene: '..problem) end
+    sceneError=problem
+end
+renderScene=function(p,blocks,es,events,ack,hotbar)
     local seen={}
     for _,b in ipairs(blocks) do
         local k=key(b.pos); seen[k]=true; local previous=objects[k]
@@ -200,38 +249,24 @@ local function commit(rows,newSession)
         entities[e.id].GetTransform().SetPosition(world(e.pos))
     end
     for id,e in pairs(entities) do if not seen[id] then destroy(e); entities[id]=nil end end
-    local parts={
-        {name='head',x=0,y=1.5,z=0,scale=V(0.5,0.5,0.5),tex='skin'},
-        {name='body',x=0,y=1,z=0,scale=V(0.5,0.6,0.25),tex=p.armor>0 and 'armor' or 'shirt'},
-        {name='left_arm',x=-0.375,y=1,z=0,scale=V(0.25,0.6,0.25),tex=p.armor>0 and 'armor' or 'skin'},
-        {name='right_arm',x=0.375,y=1,z=0,scale=V(0.25,0.6,0.25),tex=p.armor>0 and 'armor' or 'skin'},
-        {name='left_leg',x=-0.125,y=0.4,z=0,scale=V(0.25,0.6,0.25),tex='pants'},
-        {name='right_leg',x=0.125,y=0.4,z=0,scale=V(0.25,0.6,0.25),tex='pants'},
-    }
-    local angle=-p.yaw*math.pi/180
-    for _,a in ipairs(parts) do
-        if not avatar[a.name] then avatar[a.name]=cube(p.pos,a.tex,a.scale,false) end
-        local o=avatar[a.name]; o.SetIsVisible(p.alive and C.firstPerson==false); o.SetTexture(a.tex)
-        o.GetTransform().SetPosition(world(point(p.pos.x+a.x*math.cos(angle),p.pos.y+a.y,p.pos.z+a.x*math.sin(angle))))
-        o.GetTransform().SetRotation(0,p.yaw,0)
-    end
-    table.sort(events,function(a,b) return a.id<b.id end)
-    for _,e in ipairs(events) do
-        if e.id>lastEvent then
-            -- At-most-once effects, including retries after an engine force call fails.
-            lastEvent=e.id
-            if e.teleport then motion:teleport(e.teleport)
-            elseif e.push then motion.vx=motion.vx+e.push.x; motion.vy=motion.vy+e.push.y; motion.vz=motion.vz+e.push.z end
-            local b=e.target and nativeTargets[e.target]
-            if b and b.Exists() and not b.IsDead() then
-                b.DoDamageAmount(math.max(0,math.min(100,e.damage))*C.nativeDamageScale,C.playerId,e.kind)
-                local d=e.direction; local force=math.max(0,math.min(20,e.knockback))
-                b.GetStructure().AddForce(-d.x*force,d.y*force,d.z*force,tm.enums.forceType.impulse)
-            end
+    if C.firstPerson==false then
+        local parts={
+            {name='head',x=0,y=1.5,z=0,scale=V(0.5,0.5,0.5),tex='skin'},
+            {name='body',x=0,y=1,z=0,scale=V(0.5,0.6,0.25),tex=p.armor>0 and 'armor' or 'shirt'},
+            {name='left_arm',x=-0.375,y=1,z=0,scale=V(0.25,0.6,0.25),tex=p.armor>0 and 'armor' or 'skin'},
+            {name='right_arm',x=0.375,y=1,z=0,scale=V(0.25,0.6,0.25),tex=p.armor>0 and 'armor' or 'skin'},
+            {name='left_leg',x=-0.125,y=0.4,z=0,scale=V(0.25,0.6,0.25),tex='pants'},
+            {name='right_leg',x=0.125,y=0.4,z=0,scale=V(0.25,0.6,0.25),tex='pants'},
+        }
+        local angle=-p.yaw*math.pi/180
+        for _,a in ipairs(parts) do
+            if not avatar[a.name] then avatar[a.name]=cube(p.pos,a.tex,a.scale,false) end
+            local o=avatar[a.name]; o.SetIsVisible(p.alive and C.firstPerson==false); o.SetTexture(a.tex)
+            o.GetTransform().SetPosition(world(point(p.pos.x+a.x*math.cos(angle),p.pos.y+a.y,p.pos.z+a.x*math.sin(angle))))
+            o.GetTransform().SetRotation(0,p.yaw,0)
         end
     end
-    if ack then for i=#pending,1,-1 do if pending[i][2]<=ack then table.remove(pending,i) end end end
-    tm.playerUI.SetUIValue(C.playerId,'mm_hotbar',table.concat(hotbar,' | '))
+    tm.playerUI.SetUIValue(C.playerId,'mm_hotbar',string.sub(table.concat(hotbar,' | '),1,64))
     message(string.format('Java linked | HP %.1f | %s | slot %d',p.health,p.creative and 'Creative' or 'Survival',slot+1))
 end
 local function enqueue(kind,...)
@@ -294,15 +329,18 @@ local function flag(k) return keys[k] and 1 or 0 end
 local function readView(now)
     if not linked or not mcSession then return end
     local ok,text=pcall(tm.os.ReadAllText_Dynamic,'control.frame')
-    if not ok then return end
+    if not ok then controlError='cannot read control.frame: '..tostring(text); return end
     local valid,frame=pcall(W.decode,text)
-    if not valid or frame.session~=mcSession or frame.sequence<=lastViewSeq or #frame.records~=1 then return end
+    if not valid then controlError='invalid control.frame: '..tostring(frame); return end
+    if frame.session~=mcSession then controlError='control.frame session does not match linked Minecraft'; return end
+    if frame.sequence<=lastViewSeq then return end
+    if #frame.records~=1 then controlError='unexpected control.frame row count'; return end
     local r=frame.records[1]
     if #r~=13 or r[1]~='CONTROL' then return end
     local next={forward=W.number(r[2]),sideways=W.number(r[3]),jump=r[4]=='1',sneak=r[5]=='1',sprint=r[6]=='1',
         flying=r[7]=='1',creative=r[8]=='1',yaw=W.number(r[9]),pitch=W.number(r[10]),eyeHeight=W.number(r[11]),menu=r[12]=='1'}
     if math.abs(next.forward)>1 or math.abs(next.sideways)>1 or next.eyeHeight<0 or next.eyeHeight>3 then return end
-    control=next; controlFresh=now
+    controlError=''; control=next; controlFresh=now
     player.yaw=next.yaw; player.pitch=next.pitch; player.eyeHeight=next.eyeHeight
     lookYaw=next.yaw; pitch=next.pitch
     lastViewSeq=frame.sequence; lastFresh=now
@@ -339,7 +377,10 @@ local function write()
         rows[#rows+1]={'INPUT',flag('w'),flag('s'),flag('a'),flag('d'),flag('space'),flag('left shift'),flag('f'),flag('g'),yaw,pitch,0,slot}
         local now=tm.os.GetRealtimeSinceStartup()
         if now-lastScene>=C.interval then
-            lastScene=now; sceneRows={}; targets(sceneRows); terrain(sceneRows)
+            lastScene=now
+            local sample={}
+            local ok=attempt('world samples',function() targets(sample); terrain(sample) end)
+            sceneRows=ok and sample or {}
         end
         for _,row in ipairs(sceneRows) do rows[#rows+1]=row end
         for _,event in ipairs(pending) do rows[#rows+1]=event end
@@ -353,46 +394,72 @@ local function keyDown(p,k)
 
 end
 local function keyUp(p,k) if p.playerId==C.playerId then keys[string.lower(k)]=false end end
+local function advance(deadline,now,interval)
+    deadline=deadline+interval
+    if now-deadline>interval then deadline=now+interval end
+    return deadline
+end
 function update()
     local now=tm.os.GetRealtimeSinceStartup()
-    if now-lastViewRead>=(C.viewInterval or 0.02) then
-        lastViewRead=now
+    updateCount=updateCount+1
+    if now>=nextViewRead then
+        nextViewRead=advance(nextViewRead,now,C.viewInterval or 1/60)
         local ok,err=pcall(readView,now)
         if not ok and not warned then tm.os.Log('MineMakers camera: '..tostring(err)); warned=true end
     end
     if now-lastRead>=C.interval then
         lastRead=now
         local ok,text=pcall(tm.os.ReadAllText_Dynamic,'minecraft.frame')
+        if not ok then fileError='cannot read minecraft.frame: '..tostring(text) end
         if ok then
             local valid,frame=pcall(W.decode,text)
+            if not valid then fileError='invalid minecraft.frame: '..tostring(frame) else fileError='' end
             if valid and (frame.session~=mcSession or frame.sequence>lastMcSeq) then
                 local applied,err=pcall(commit,frame.records,frame.session~=mcSession)
                 if applied then
                     if mcSession~=frame.session then pending={}; hostEvent=0 end
-                    mcSession=frame.session; lastMcSeq=frame.sequence; lastFresh=now; warned=false
-                elseif not warned then message(tostring(err)); tm.os.Log('MineMakers rejected snapshot: '..tostring(err)); warned=true end
+                    mcSession=frame.session; lastMcSeq=frame.sequence; lastFresh=now; warned=false; startupError=''
+                else
+                    startupError=tostring(err)
+                    if not warned then message(startupError); tm.os.Log('MineMakers rejected snapshot: '..startupError); warned=true end
+                end
             end
         end
         if now-lastFresh>C.timeout and linked then cleanup(); keys={}; message('Java disconnected; controls restored') end
     end
     local moved,moveError=pcall(move,now)
-    if not moved then message('Movement error: '..tostring(moveError)); tm.os.Log(tostring(moveError)) end
+    local problem=moved and '' or tostring(moveError)
+    if problem~=movementError and not moved then message('Movement error: '..problem); tm.os.Log(problem) end
+    movementError=problem
     if now-lastStatus>=1 then
         lastStatus=now
+        updateRate=updateCount/math.max(0.001,now-statusSince); updateCount=0; statusSince=now
         local state=cameraError~='' and ('camera error: '..cameraError) or (camera and 'first-person API active' or 'camera waiting')
-        pcall(tm.os.WriteAllText_Dynamic,'minemakers-status.txt','MineMakers 0.3.0 | player '..C.playerId..' | '..state..'\nHost movement: '..tostring(linked)..' | control age: '..(now-controlFresh)..'\n')
+        local lines={'MineMakers 0.3.1 | player '..C.playerId..' | '..state,
+            'Host movement: '..tostring(linked)..' | control age: '..(now-controlFresh),
+            'Host session: '..session..' | Minecraft session: '..tostring(mcSession),
+            'Startup error: '..(startupError~='' and startupError or 'none'),
+            'Scene file: '..(fileError~='' and fileError or 'readable')..' | sequence: '..lastMcSeq,
+            'Control stream: '..(controlError~='' and controlError or 'accepted')..' | sequence: '..lastViewSeq,
+            'Scene error: '..(sceneError~='' and sceneError or 'none'),
+            'Movement error: '..(movementError~='' and movementError or 'none'),
+            'Host write error: '..(writeError~='' and writeError or 'none'),
+            string.format('Lua updates: %.1f/s',updateRate)}
+        for name,problem in pairs(issues) do lines[#lines+1]='API '..name..': '..problem end
+        pcall(tm.os.WriteAllText_Dynamic,'minemakers-status.txt',table.concat(lines,'\n')..'\n')
     end
-    if now-lastWrite>=(C.inputInterval or C.interval) then
-        lastWrite=now
+    if now>=nextWrite then
+        nextWrite=advance(nextWrite,now,C.inputInterval or 1/60)
         local ok,err=pcall(write)
-        if not ok and not warned then tm.os.Log('MineMakers bridge: '..tostring(err)); warned=true end
+        writeError=ok and '' or tostring(err)
+        if not ok and not warned then tm.os.Log('MineMakers bridge: '..writeError); warned=true end
     end
 end
-for _,tex in ipairs({'skin','shirt','pants','armor','pearl'}) do tm.physics.AddTexture(tex..'.png',tex) end
+for _,tex in ipairs({'skin','shirt','pants','armor','pearl'}) do tm.physics.AddTexture('data_static/'..tex..'.png',tex) end
 for _,material in ipairs({'wood','stone','bedrock','tnt'}) do
-    for stage=0,10 do local t=material..'_'..stage; tm.physics.AddTexture(t..'.png',t) end
+    for stage=0,10 do local t=material..'_'..stage; tm.physics.AddTexture('data_static/'..t..'.png',t) end
 end
-tm.physics.AddMesh('cube.obj','cube')
+tm.physics.AddMesh('data_static/cube.obj','cube')
 pcall(function() tm.os.WriteAllText_Dynamic('minemakers-runtime-api.txt',tm.GetDocs()) end)
 tm.playerUI.AddUILabel(C.playerId,'mm_status','MineMakers: waiting for Minecraft Java')
 tm.playerUI.AddUILabel(C.playerId,'mm_hotbar','F: attack/mine | G: use/place | 1-9: hotbar | arrows: pitch')

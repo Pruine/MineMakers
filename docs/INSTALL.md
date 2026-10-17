@@ -11,7 +11,7 @@ no installed copy was available during development.
 
 1. Use the prebuilt JAR in the ZIP's `Minecraft/mods/` folder. If building from source,
    build the JAR using `fabric/gradlew build` (Windows: `gradlew.bat build`). Copy
-   `fabric/build/libs/minemakers-fabric-0.3.0.jar` and the matching Fabric API JAR to
+   `fabric/build/libs/minemakers-fabric-0.3.1.jar` and the matching Fabric API JAR to
    the Minecraft instance's `mods` directory.
 2. In Trailmakers, create a local mod using its mod tools, then copy `mod/main.lua`
    and the entire `mod/data_static` directory into that generated mod directory.

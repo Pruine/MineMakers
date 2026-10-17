@@ -28,17 +28,21 @@ T.block.GetPosition=function() return vector(0,5,2) end
 T.block.GetSize=function() return vector(2,2,2) end
 T.block.Equals=function(b) return b==T.block end
 T.block.DoDamageAmount=function(damage,owner,kind) assert(damage>=0); T.damageCalls=T.damageCalls+1 end
-T.block.GetStructure=function() return {AddForce=function(x,y,z,kind) T.forceCalls=T.forceCalls+1 end} end
+T.block.GetStructure=function() return {AddForce=function(x,y,z,kind) assert(kind=='Impulse'); T.forceCalls=T.forceCalls+1 end} end
 local structure={GetBlocks=function() return {T.block} end}
-tm={os={},physics={},players={},playerUI={},input={},vector3={Create=vector},enums={physicsMaterial={stone='Stone'},forceType={impulse='Impulse'}}}
+tm={os={},physics={},players={},playerUI={},input={},vector3={Create=vector}}
+setmetatable(tm,{__index=function(_,name) error('cannot access field '..name..' of userdata<Trailmakers.Mods.Api.ModApiRoot>') end})
 tm.os.DoFile=function(name) return assert(loadfile(TEST_ROOT..'/mod/data_static/'..name..'.lua'))() end
 tm.os.SetModTargetDeltaTime=function(dt) T.updateInterval=dt end
 tm.os.GetRealtimeSinceStartup=function() return T.time end
 tm.os.Log=function(s) T.lastLog=s end
 tm.os.ReadAllText_Dynamic=function(path) assert(T.files[path], 'not found'); return T.files[path] end
 tm.os.WriteAllText_Dynamic=function(path,s) T.files[path]=s end
-tm.physics.AddTexture=function(path,name) T.textures[name]=true end
-tm.physics.AddMesh=function(path,name) assert(path=='cube.obj') end
+tm.physics.AddTexture=function(path,name)
+    local f=assert(io.open(TEST_ROOT..'/mod/'..path,'rb'),'Asset path is relative to mod root: '..path); f:close()
+    T.textures[name]=true
+end
+tm.physics.AddMesh=function(path,name) assert(path=='data_static/cube.obj'); local f=assert(io.open(TEST_ROOT..'/mod/'..path,'r')); f:close() end
 tm.physics.SpawnCustomObjectRigidbody=function(p,mesh,texture,kinematic,mass,material)
     assert(T.textures[texture], 'Unknown texture '..texture)
     assert(mesh=='cube' and kinematic and mass==1 and material=='Stone')

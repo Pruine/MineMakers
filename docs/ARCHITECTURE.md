@@ -199,7 +199,7 @@ export opaque. First-person perspective is selected during capture and the old
 perspective is restored on release. This path targets vanilla rendering; shader
 and renderer replacement mods are not validated.
 
-`overlay.bgra` is atomic binary output, at most 1280×720 and 30 FPS. The 100-byte
+`overlay.bgra` is atomic binary output, at most 1280×720 with a 60 FPS target. The 100-byte
 little-endian header is `<4sIIIQQI64s`: `MMOV`, version 1, width, height, image
 sequence, acknowledged desktop event ID, flags (bit 0 = menu open), and zero-padded
 ASCII desktop session token. Bottom-up BGRA pixel rows follow. GL blending produces
@@ -214,3 +214,19 @@ is exported by the mod.
 Actual Minecraft hand/HUD export, inventory opening, remote slot clicks, mouse look
 and pause-menu liveness were exercised under Xvfb/Mesa. The Win32 compositor and
 Trailmakers-side camera remain untested on this Linux cloud machine.
+
+## 0.3.1 startup and capture recovery
+
+Scene rendering errors are caught after the core handshake; they cannot restart
+the owned camera. Asset imports are relative to the mod root and explicitly use
+`data_static/`. The real root API does not contain `tm.enums`; named material/force
+values are supplied directly. First person does not spawn the third-person avatar.
+Optional native API state calls are isolated and recorded in the status file.
+
+Control and capture scheduling retain deadlines across small frame-time variation.
+Overlay buffers are recycled only after the image writer releases them; replacing
+the single pending frame drops older pixels without reusing a writer-owned buffer.
+This removes per-frame multi-megabyte heap allocation and a read/clear race in the
+previous volatile handoff. The helper enables precise Windows timer resolution
+while armed and restores it on release. Frame timing is reported in
+`minemakers-client-status.txt`; native Windows performance remains to be measured.

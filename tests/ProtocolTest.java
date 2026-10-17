@@ -2,6 +2,8 @@ import dev.minemakers.bridge.Wire;
 import dev.minemakers.bridge.BlockDamage;
 import dev.minemakers.bridge.DesktopInput;
 import dev.minemakers.bridge.HostPose;
+import dev.minemakers.bridge.FramePacer;
+import dev.minemakers.bridge.OverlayFrames;
 import java.nio.file.*;
 import java.util.*;
 
@@ -31,6 +33,28 @@ public final class ProtocolTest {
         check(HostPose.read(hostFrame,"stale_session")==null);
         check(HostPose.read(new Wire.Frame("host",2,List.<String[]>of(new String[]{"LINK","mc_session"})),"mc_session")==null);
         check(HostPose.read(new Wire.Frame("host",3,List.of(new String[]{"LINK","mc_session"},new String[]{"HOST_POSE","NaN","2","3","0","0","1","0","0"})),"mc_session")==null);
+        var pacer=new FramePacer(16_666_667L);
+        int frames=0;
+        for (int i=0;i<120;i++) {
+            long now=i*16_666_667L+(i%2==0?0:300_000L);
+            if (pacer.due(now)) frames++;
+        }
+        check(frames>=118 && frames<=120); // timer jitter must not halve the target frame rate
+        check(pacer.due(10_000_000_000L));
+        check(!pacer.due(10_000_000_000L)); // no catch-up burst after a stall
+        var images=new OverlayFrames();
+        byte[] first=images.acquire(8); first[0]=1;
+        images.publish(new OverlayFrames.Image(Path.of("overlay"),first));
+        var writerOwned=images.take();
+        byte[] second=images.acquire(8); check(second!=first); second[0]=2;
+        images.publish(new OverlayFrames.Image(Path.of("overlay"),second));
+        byte[] third=images.acquire(8); check(third!=first && third!=second); third[0]=3;
+        images.publish(new OverlayFrames.Image(Path.of("overlay"),third));
+        check(writerOwned.bytes()[0]==1); // publisher must never reuse a writer-owned pixel buffer
+        var latest=images.take(); check(latest.bytes()==third && latest.bytes()[0]==3);
+        check(images.take()==null);
+        images.release(writerOwned); check(images.acquire(8)!=third);
+        check(images.acquire(16).length==16); // resize discards mismatched recycled buffers
         var damage=new BlockDamage();
         var wood=damage.hit(1,20,40,1,false); var stone=damage.hit(2,20,120,2,false);
         check(wood.remaining()==26 && stone.remaining()==110);

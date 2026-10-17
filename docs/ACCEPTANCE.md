@@ -3,7 +3,7 @@
 Current cloud validation (native Trailmakers and Windows checks remain unrun):
 
 - PASS: full Fabric/Loom Java 21 compile, resource processing and remapped JAR build.
-- PASS: 119 Java protocol and accumulated-damage assertions, including every truncated
+- PASS: 129 Java protocol and accumulated-damage assertions, including every truncated
   prefix of a representative frame, nonfinite numbers, blast hit caps, resistance,
   unbreakable blocks, monotonic cracks, destruction and state reset.
 - PASS: Python/Lua 5.2 tests for protocol framing and Java↔Lua interoperability.
@@ -72,3 +72,13 @@ host +X and A moved 4.27 m along host +Z; the Minecraft proxy followed at the sa
 height without void falling or correction warnings. The real inventory opened,
 vanilla double-Space enabled host flight, and survival landed on host ground.
 These checks simulate the Trailmakers API; they do not validate its native camera.
+
+0.3.1 adds regression coverage for the installed-game failures: asset imports
+resolve real files from the mod root, the fake root rejects unknown fields such
+as `tm.enums`, scene failures cannot restart the camera/handshake, missing optional
+API calls do not freeze controls, and rejected handshakes retain their cause.
+Frame-pacing tests cover timer jitter and stalls; pixel-buffer tests protect writer
+ownership across pending-image replacement/resize, and helper timer requests are
+paired. The prior actual Minecraft runtime checks were performed against 0.3.0;
+0.3.1 has been built and regression-tested, without a new native Windows/Trailmakers
+runtime test.

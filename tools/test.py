@@ -8,7 +8,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 import struct
-from desktop_protocol import HEADER, InputQueue, decode_overlay, resolve_directory, FrameWriter
+from desktop_protocol import HEADER, InputQueue, decode_overlay, resolve_directory, FrameWriter, TimerResolution
 from lupa.lua52 import LuaRuntime
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -99,6 +99,61 @@ class Tests(unittest.TestCase):
         self.assertTrue(test.repair)
         self.assertFalse(test.invincible)
         self.assertFalse(any(v.alive for _,v in test.spawns.items()))
+    def start_adapter(self):
+        self.lua.globals().TEST_ROOT=str(ROOT)
+        self.lua.execute((ROOT/'tests/fake_trailmakers.lua').read_text())
+        self.lua.execute((ROOT/'mod/main.lua').read_text())
+        test=self.lua.globals().TEST
+        test.time=.3;self.lua.globals().update()
+        host=self.wire.decode(test.files['trailmakers.frame'])
+        return test,host
+    def send_player(self,test,host,sequence=1,extra=()):
+        rows=[['HOST_SESSION',host.session],['CAPS','HOST_MOTION_1'],['PLAYER',0,0,0,0,0,20,1,1,12],*extra]
+        test.files['minecraft.frame']=self.wire.encode('mc_test',sequence,self.rows(rows))
+        test.time+=.3;self.lua.globals().update()
+    def test_missing_optional_api_does_not_block_camera_or_controls(self):
+        test,host=self.start_adapter()
+        self.lua.globals().tm.players.GetRepairEnabled=None
+        self.send_player(test,host)
+        test.time=2;self.lua.globals().update()
+        status=test.files['minemakers-status.txt']
+        self.assertIn('Host movement: true',status)
+        self.assertIn('API repair state:',status)
+        self.assertTrue(test.cameraActive)
+        test.files['control.frame']=self.wire.encode('mc_test',1,self.rows([['CONTROL',1,0,0,0,0,0,1,90,0,1.62,0,0]]))
+        test.time=2.02;self.lua.globals().update()
+        self.assertIn('LINK',test.files['trailmakers.frame'])
+        self.assertAlmostEqual(test.cameraDirection.x,1)
+    def test_scene_failure_does_not_restart_link_or_camera(self):
+        test,host=self.start_adapter()
+        # An engine failure spawning a scene block must not unwind the player handshake.
+        self.lua.globals().tm.physics.SpawnCustomObjectRigidbody=self.lua.eval("function() error('scene spawn failed') end")
+        extra=[['BLOCK',2,0,2,'minecraft:stone',-1],['EVENT',1,'TELEPORT',3,0,0]]
+        self.send_player(test,host,extra=extra)
+        self.assertAlmostEqual(test.cameraPosition.x,-3,'Scene failures must not block player teleports')
+        before=test.cameraActivations
+        self.send_player(test,host,sequence=2,extra=extra)
+        test.time=2;self.lua.globals().update()
+        self.assertEqual(test.cameraActivations,before)
+        self.assertIn('Host movement: true',test.files['minemakers-status.txt'])
+        self.assertIn('scene spawn failed',test.files['minemakers-status.txt'])
+        self.assertTrue(any(r[1]=='LINK' for _,r in self.wire.decode(test.files['trailmakers.frame']).records.items()))
+    def test_rejected_handshake_records_cause(self):
+        test,host=self.start_adapter()
+        self.send_player(test,host)
+        # A new Minecraft process with an old host echo must not take control.
+        test.files['minecraft.frame']=self.wire.encode('wrong_mc',1,self.rows([['HOST_SESSION','old_host'],['CAPS','HOST_MOTION_1'],['PLAYER',0,0,0,0,0,20,1,1,0]]))
+        test.time=2;self.lua.globals().update()
+        self.assertIn('Waiting for current host handshake',test.files['minemakers-status.txt'])
+
+    def test_windows_capture_timer_is_balanced(self):
+        calls=[]
+        timer=TimerResolution(lambda ms: calls.append(('begin',ms)) or 0,lambda ms: calls.append(('end',ms)) or 0)
+        timer.set(True);timer.set(True);timer.set(False);timer.set(False)
+        self.assertEqual(calls,[('begin',1),('end',1)])
+        failed=TimerResolution(lambda ms: 1,lambda ms: self.fail('Do not end a timer request that failed'))
+        failed.set(True);failed.set(False)
+        self.assertFalse(failed.active)
     def test_windows_locked_frame_recovery(self):
         with tempfile.TemporaryDirectory() as temp:
             destination=Path(temp)/'desktop.frame'
@@ -173,7 +228,7 @@ class Tests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             d=Path(directory)
             (d/'lua.frame').write_text(self.wire.encode('lua_test',1,self.rows([['ACK',1],['LINK','session_1']])))
-            files=[ROOT/'fabric/src/main/java/dev/minemakers/bridge'/f for f in ('Wire.java','BlockDamage.java','DesktopInput.java','HostPose.java')]
+            files=[ROOT/'fabric/src/main/java/dev/minemakers/bridge'/f for f in ('Wire.java','BlockDamage.java','DesktopInput.java','HostPose.java','FramePacer.java','OverlayFrames.java')]
             subprocess.run([javac,'--release','21','-d',str(d),*[str(p) for p in files],str(ROOT/'tests/ProtocolTest.java')],check=True)
             subprocess.run([java,'-cp',str(d),'ProtocolTest',str(d)],check=True)
             decoded=self.wire.decode((d/'java.frame').read_text())

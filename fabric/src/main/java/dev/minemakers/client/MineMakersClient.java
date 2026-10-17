@@ -10,18 +10,19 @@ import net.minecraft.client.option.KeyBinding;
 import java.util.HashMap;
 import java.util.Map;
 
-/** Trailmakers stays in the foreground. Vanilla input/physics runs in the background Minecraft. */
+/** Trailmakers stays in the foreground; Minecraft supplies controls and UI. */
 public final class MineMakersClient implements ClientModInitializer {
     private final Map<KeyBinding,Boolean> held=new HashMap<>();
     private Boolean oldPause;
 
     @Override public void onInitializeClient() { ClientTickEvents.START_CLIENT_TICK.register(this::tick);
         ClientTickEvents.END_CLIENT_TICK.register(HostMotionClient::tick);
-        net.fabricmc.fabric.api.client.rendering.v1.WorldRenderEvents.START.register(context -> ViewStream.publish(context.camera())); }
+    }
     public static void renderInput() {
         MinecraftClient mc=MinecraftClient.getInstance();
         DesktopController.tick(mc,MineMakers.bridge);
         OverlayCapture.tick(mc);
+        ViewStream.publish();
     }
     private void key(KeyBinding key,boolean down) {
         boolean previous=held.getOrDefault(key,false);

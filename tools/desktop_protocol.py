@@ -106,3 +106,16 @@ class FrameWriter:
     def close(self):
         try: self.temporary.unlink(missing_ok=True)
         except PermissionError: pass
+
+
+class TimerResolution:
+    """Pair Windows timer requests, only while capture is armed."""
+    def __init__(self, begin, end):
+        self.begin, self.end, self.active = begin, end, False
+
+    def set(self, enabled):
+        if enabled and not self.active:
+            self.active = self.begin(1) == 0
+        elif not enabled and self.active:
+            self.end(1)
+            self.active = False

@@ -13,10 +13,36 @@ player movement and movement-packet correction are disabled only for the linked
 player. Minecraft still runs inventory, item use, screens, health and game modes.
 This is a Minecraft-style Lua controller, rather than vanilla Minecraft physics.
 
+## 0.3.1 loading and frame-pacing fixes
+
+The installed-game logs exposed two mistakes in 0.3.0: texture/mesh filenames were
+resolved from the mod root, although the files were shipped inside `data_static`,
+and the script referenced a `tm.enums` field that the real API does not expose.
+Imports now use explicit `data_static/...` paths, and physics material/force
+arguments use the named values `Stone` and `Impulse`.
+
+Player startup is independent of scene rendering. A scene spawn failure cannot
+unwind the handshake and repeatedly remove/recreate the camera. First person
+also skips the six unused third-person avatar meshes. Optional repair/body getters
+cannot block controls, and their errors remain visible in the status file.
+
+Overlay export now targets 60 FPS with stable deadlines, reusable pixel buffers
+and an atomic handoff to the file writer. Lua control reads/writes use stable
+deadlines as well. The Windows helper requests 1 ms timer resolution only while
+armed and balances that request on release/exit. Actual FPS depends on both games,
+GPU readback, file access and Windows composition; 60 FPS is a target, not a measured
+guarantee. This patch has not been exercised in the installed Windows games here.
+
+`minemakers-status.txt` now includes startup, scene, movement, file and API errors,
+both session IDs, accepted sequences and the Lua update rate. While F8 capture is
+active, `minemakers-client-status.txt` reports measured render/capture/write FPS
+and the last export error. These preserve the cause rather than only saying
+“camera waiting.”
+
 ## Install the whole update
 
 1. Exit both games and close the overlay helper. Download and extract the entire
-   `MineMakers-experimental-0.3.0.zip`.
+   `MineMakers-experimental-0.3.1.zip`.
 2. Remove the old MineMakers JAR from Minecraft's `mods` folder and copy the new
    JAR from `Minecraft/mods/`. Keep Fabric API installed. Restart Minecraft so the
    new dimension and mixins load; an already running client cannot load this update.
