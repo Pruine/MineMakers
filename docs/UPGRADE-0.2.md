@@ -1,5 +1,7 @@
 # 0.2: first person, mouse look and Minecraft UI
 
+**Historical release notes. Install the current complete update using [UPGRADE-0.3.md](UPGRADE-0.3.md).**
+
 The 0.1 prototype only moved the Trailmakers body and placed proxy objects. It did
 not create a first-person camera or export Minecraft's HUD, inventory, or hand.
 It also forcibly reset Minecraft yaw/pitch even while Minecraft had focus. Those

@@ -1,6 +1,6 @@
 # Experimental local setup
 
-**Upgrading from 0.1? Follow [UPGRADE-0.2.md](UPGRADE-0.2.md) first.**
+**Upgrading? Replace all parts using [UPGRADE-0.3.md](UPGRADE-0.3.md).**
 The prebuilt ZIP already includes the Fabric JAR; building is optional.
 
 Use the Steam Windows version of Trailmakers with its official Lua mod loader,
@@ -11,7 +11,7 @@ no installed copy was available during development.
 
 1. Use the prebuilt JAR in the ZIP's `Minecraft/mods/` folder. If building from source,
    build the JAR using `fabric/gradlew build` (Windows: `gradlew.bat build`). Copy
-   `fabric/build/libs/minemakers-fabric-0.2.3.jar` and the matching Fabric API JAR to
+   `fabric/build/libs/minemakers-fabric-0.3.0.jar` and the matching Fabric API JAR to
    the Minecraft instance's `mods` directory.
 2. In Trailmakers, create a local mod using its mod tools, then copy `mod/main.lua`
    and the entire `mod/data_static` directory into that generated mod directory.
@@ -21,11 +21,11 @@ no installed copy was available during development.
 3. Start a **singleplayer Trailmakers session**, enable the mod, and stand in an
    open area outside a contraption. The default paired player ID is 0, configured
    in `data_static/config.lua`. Stay outside a seat while driving Minecraft.
-4. Start Minecraft in a **new, disposable, creative superflat void world with cheats**.
-   A void preset is `minecraft:air;minecraft:the_void`. Start in flight so there is
-   time to link before falling. Keep this world separate from regular saves.
-   The bridge temporarily writes barrier blocks to represent host terrain; normal
-   unlink removes barriers it owns, but a crash can leave them in this dedicated world.
+4. Start Minecraft in a singleplayer test world with commands enabled. Linking
+   automatically transfers the player into a dedicated empty host dimension.
+   Normal Minecraft terrain is excluded from that dimension. The player stays
+   frozen until valid host motion arrives. `/minemakers unlink` returns to the
+   original world and position during the same session.
 5. Run `/minemakers link "C:/absolute/path/to/the/mod/data_dynamic_willnotbeuploadedtoworkshop"` in Minecraft.
    The path must be the **same real local directory** Trailmakers reads/writes.
    Forward slashes avoid Brigadier's backslash escaping. Both games must run on the

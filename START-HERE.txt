@@ -1,46 +1,29 @@
-UPGRADING TO 0.2.3: Exit both games and close the old overlay helper.
-Replace the Minecraft MineMakers JAR, Trailmakers main.lua and data_static,
-and run the helper from THIS extracted ZIP. Keep only one MineMakers JAR.
-Keep firstPerson=true. See docs/UPGRADE-0.2.md for full steps.
+MineMakers 0.3.0 -- Trailmakers-owned player movement and collisions
 
-MineMakers 0.2.2 setup and Windows file-lock fix
+EXTRACT THE WHOLE ZIP. Exit both games and close the old helper before upgrading.
+Replace ALL parts: Minecraft JAR, Trailmakers main.lua + data_static, and helper.
+Keep only one MineMakers JAR. Keep firstPerson=true in the new config.lua.
+No Gradle build is needed: Minecraft/mods contains the compiled JAR.
 
-EXTRACT THE WHOLE ZIP before launching anything.
+Read docs/UPGRADE-0.3.md for installation and validation details.
 
-The extracted ZIP contains:
-  Start-MineMakers-Overlay.cmd    <-- double-click this to launch the UI helper
-  tools/desktop_overlay.py       <-- the helper code
-  tools/desktop_protocol.py      <-- required alongside the helper
-  Minecraft/mods/                <-- the prebuilt Fabric JAR
-  Trailmakers/                   <-- Lua files to copy into the actual game mod
+1. Install Minecraft 1.21.1, Java 21, Fabric Loader and matching Fabric API.
+2. Copy Minecraft/mods/minemakers-fabric-0.3.0.jar into Minecraft's mods folder.
+3. Copy Trailmakers/main.lua and data_static into your generated Trailmakers mod.
+4. Start Trailmakers outside a seat, enable the mod, and start Minecraft singleplayer.
+5. Run /minemakers link "C:/.../data_dynamic_willnotbeuploadedtoworkshop" in Minecraft.
+   Use the EXISTING folder containing trailmakers.frame. Linking automatically
+   uses a dedicated empty Minecraft dimension; /minemakers unlink returns you.
+6. Double-click Start-MineMakers-Overlay.cmd FROM THIS ZIP. Paste that same folder.
+7. Keep Minecraft running behind windowed/borderless Trailmakers. Focus Trailmakers
+   and press F8. F8 again or Alt-Tab releases capture.
 
-The GAME MOD folder contains:
-  main.lua
-  data_static/
-  data_dynamic_willnotbeuploadedtoworkshop/
-    trailmakers.frame
-    minecraft.frame
-    view.frame
+W/A/S/D: move | mouse: look | Space: jump | Shift: crouch | Ctrl: sprint | E: inventory
+Creative double-Space: flight | Space/Shift: ascend/descend
 
-The .py files do NOT belong in the frame folder. Trailmakers does not create them.
-They are in the tools folder of this extracted ZIP.
+Helper scripts are in tools/, not in the game's frame folder.
+Frames: trailmakers.frame, minecraft.frame, control.frame, desktop.frame, overlay.bgra.
+Old view.frame files are ignored. Do not combine this Lua with an older JAR.
+Diagnostics: minemakers-status.txt and minemakers-runtime-api.txt in the frame folder.
 
-1. Install Python 3.10+ if necessary. The helper needs no pip packages.
-2. Keep the Trailmakers mod running. Double-click Start-MineMakers-Overlay.cmd.
-3. Paste the full Explorer path to the EXISTING folder containing trailmakers.frame:
-   .../data_dynamic_willnotbeuploadedtoworkshop
-4. Use that exact same full path in Minecraft's /minemakers link "..." command.
-5. Keep Minecraft running behind borderless/windowed Trailmakers. Focus Trailmakers
-   and press F8. F8 again releases the helper.
-
-The helper creates desktop.frame. Minecraft creates overlay.bgra after capture is
-active. If neither appears, the overlay has not started; the old three frame files
-alone do not mean that the HUD overlay is running.
-
-0.2.2 retries temporary Windows file locks instead of stopping the overlay.
-Close the previous helper window before launching the new helper.
-
-If 0.2 or 0.2.1 is already installed, this release does not change Minecraft gameplay.
-You can use the new launcher/tools with the existing 0.2 JAR and Lua files.
-If installing the included 0.2.2 JAR, remove the older MineMakers JAR first.
-See docs/UPGRADE-0.2.md for the full setup and current limitations.
+Actual Trailmakers camera/physics and Windows compositing still need in-game testing.

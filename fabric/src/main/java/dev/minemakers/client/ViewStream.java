@@ -6,7 +6,7 @@ import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.render.Camera;
 import java.util.List;
 
-/** Use the same interpolated eye/look as Minecraft's renderer, not raw 20 Hz tick positions. */
+/** Sends intent, never Minecraft's simulated position. Trailmakers moves and renders locally. */
 public final class ViewStream {
     private static long sequence,last;
     public static void publish(Camera camera) {
@@ -15,9 +15,13 @@ public final class ViewStream {
         long now=System.nanoTime();
         if (bridge==null || mc.player==null || now-last<15_000_000L) return;
         last=now;
-        double eye=mc.player.getEyeY()-mc.player.getY();
-        var feet=camera.getPos().subtract(0,eye,0).subtract(MineMakers.origin());
-        bridge.publishView(++sequence,List.<String[]>of(Bridge.row("VIEW",feet.x,feet.y,feet.z,
-            camera.getYaw(),camera.getPitch(),eye,mc.currentScreen!=null ? 1 : 0)));
+        boolean menu=mc.currentScreen!=null;
+        int forward=menu ? 0 : (mc.options.forwardKey.isPressed()?1:0)-(mc.options.backKey.isPressed()?1:0);
+        int side=menu ? 0 : (mc.options.leftKey.isPressed()?1:0)-(mc.options.rightKey.isPressed()?1:0);
+        bridge.publishView(++sequence,List.<String[]>of(Bridge.row("CONTROL",forward,side,
+            !menu && mc.options.jumpKey.isPressed()?1:0,!menu && mc.options.sneakKey.isPressed()?1:0,
+            !menu && (mc.options.sprintKey.isPressed() || mc.player.isSprinting())?1:0,
+            mc.player.getAbilities().flying?1:0,mc.player.isCreative()?1:0,
+            mc.player.getYaw(),mc.player.getPitch(),mc.player.getEyeY()-mc.player.getY(),menu?1:0,0)));
     }
 }

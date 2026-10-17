@@ -26,8 +26,8 @@ import java.util.*;
 public final class MineMakers implements ModInitializer {
     public static volatile Bridge bridge;
     public static volatile List<Box> colliders=List.of();
-    private static UUID playerId;
-    private static Vec3d origin=Vec3d.ZERO;
+    private static volatile UUID playerId;
+    private static volatile Vec3d origin=Vec3d.ZERO;
     private static long sequence,eventId,lastHostSequence=-1;
     private static String hostSession="";
     private static final Map<Long,String[]> events=new LinkedHashMap<>();
@@ -38,6 +38,16 @@ public final class MineMakers implements ModInitializer {
     private static long lastHostEvent=0;
     private static final Set<BlockPos> terrain=new HashSet<>();
     private static ServerWorld linkedWorld;
+    private static ServerPlayerEntity linkedPlayer;
+    private static ServerWorld returnWorld;
+    private static Vec3d returnPosition;
+    private static float returnYaw,returnPitch;
+    private static Vec3d lastResolved,pendingTeleport;
+    private static final net.minecraft.registry.RegistryKey<net.minecraft.world.World> HOST_WORLD=
+        net.minecraft.registry.RegistryKey.of(net.minecraft.registry.RegistryKeys.WORLD,net.minecraft.util.Identifier.of("minemakers","trailmakers"));
+    public static boolean isHostPlayer(Entity entity) {
+        return bridge!=null && playerId!=null && playerId.equals(entity.getUuid());
+    }
     private static final Map<Long,BlockState> damagedStates=new HashMap<>();
 
     @Override public void onInitialize() {
@@ -50,10 +60,22 @@ public final class MineMakers implements ModInitializer {
                             c.getSource().sendError(Text.literal("MineMakers currently supports integrated singleplayer only.")); return 0;
                         }
                         unlink();
-                        linkedWorld=p.getServerWorld(); playerId=p.getUuid(); origin=Vec3d.of(p.getBlockPos());
-                        bridge=new Bridge(Path.of(StringArgumentType.getString(c,"directory")).toAbsolutePath());
+                        ServerWorld hostWorld=c.getSource().getServer().getWorld(HOST_WORLD);
+                        if (hostWorld==null) {
+                            c.getSource().sendError(Text.literal("MineMakers host dimension missing. Restart Minecraft after installing the updated JAR.")); return 0;
+                        }
+                        Path directory=Path.of(StringArgumentType.getString(c,"directory")).toAbsolutePath();
+                        if (!java.nio.file.Files.isDirectory(directory)) {
+                            c.getSource().sendError(Text.literal("Bridge directory does not exist; use the Trailmakers folder containing trailmakers.frame.")); return 0;
+                        }
+                        returnWorld=p.getServerWorld(); returnPosition=p.getPos(); returnYaw=p.getYaw(); returnPitch=p.getPitch();
+                        // A dedicated void dimension isolates the bridge from normal Minecraft terrain.
+                        p.teleport(hostWorld,0,128,0,p.getYaw(),p.getPitch());
+                        linkedWorld=hostWorld; linkedPlayer=p; playerId=p.getUuid(); origin=new Vec3d(0,128,0);
+                        lastResolved=p.getPos(); pendingTeleport=null;
+                        bridge=new Bridge(directory);
                         sequence=0; eventId=0; lastHostSequence=-1; hostSession="";
-                        c.getSource().sendFeedback(() -> Text.literal("MineMakers linked. Use a separate empty/void world. Trailmakers must be running."),false);
+                        c.getSource().sendFeedback(() -> Text.literal("MineMakers linked: Trailmakers owns movement and collisions. Minecraft is now an interaction/UI proxy."),false);
                         return 1;
                     })))
                 .then(CommandManager.literal("unlink").executes(c -> { unlink(); return 1; }))
@@ -101,6 +123,11 @@ public final class MineMakers implements ModInitializer {
         ServerPlayerEntity p=server.getPlayerManager().getPlayer(playerId);
         if (p==null || p.getServerWorld()!=linkedWorld) { unlink(); return; }
         ticks++;
+        if (lastResolved!=null && pendingTeleport==null && p.getPos().squaredDistanceTo(lastResolved)>0.25) {
+            pendingTeleport=p.getPos();
+            Vec3d target=pendingTeleport.subtract(origin);
+            event("TELEPORT",target.x,target.y,target.z);
+        }
         Bridge.HostFrame host=bridge.current();
         colliders=Bridge.colliders(host,bridge.session());
         if (host!=null && linked(host) && (!hostSession.equals(host.wire().session()) || host.wire().sequence()>lastHostSequence)) {
@@ -108,12 +135,24 @@ public final class MineMakers implements ModInitializer {
             lastHostSequence=host.wire().sequence();
             applyHost(p,host.wire());
         }
+        HostPose pose=host==null ? null : HostPose.read(host.wire(),bridge.session());
+        if (pose!=null) {
+            Vec3d at=origin.add(pose.x(),pose.y(),pose.z());
+            if (pendingTeleport!=null && at.squaredDistanceTo(pendingTeleport)<0.25) pendingTeleport=null;
+            if (pendingTeleport==null) {
+                p.refreshPositionAndAngles(at.x,at.y,at.z,pose.yaw(),pose.pitch());
+                p.setPose(pose.crouch() ? EntityPose.CROUCHING : EntityPose.STANDING);
+                p.setOnGround(pose.grounded()); p.setVelocity(Vec3d.ZERO); p.fallDistance=0;
+                lastResolved=at;
+            }
+        }
         if (ticks%4!=0) return;
         mirrorTerrain(p);
         if (!linked(host)) {
             for (SlimeEntity e:targets.values()) e.discard(); targets.clear(); targetIds.clear();
         }
         List<String[]> rows=new ArrayList<>();
+        rows.add(Bridge.row("CAPS","HOST_MOTION_1"));
         if (host!=null) rows.add(Bridge.row("HOST_SESSION",host.wire().session()));
         for (long key:new ArrayList<>(damagedStates.keySet())) {
             BlockPos pos=BlockPos.fromLong(key);
@@ -164,6 +203,8 @@ public final class MineMakers implements ModInitializer {
                     if (id<=lastHostEvent) continue;
                     if (r.length==8 && r[2].equals("BLOCK_HIT"))
                         r=Bridge.row("BLOCK_HIT",r[3],r[4],r[5],r[6],r[7],id,"native");
+                    else if (r.length==4 && r[2].equals("PLAYER_FALL"))
+                        r=Bridge.row("PLAYER_FALL",r[3]);
                     else if (r.length==7 && r[2].equals("PLAYER_HIT"))
                         r=Bridge.row("PLAYER_HIT",r[3],r[4],r[5],r[6]);
                     else continue;
@@ -193,10 +234,13 @@ public final class MineMakers implements ModInitializer {
                     damagedStates.put(pos.asLong(),state); crackStages.put(pos.asLong(),result.crackStage());
                     p.getServerWorld().setBlockBreakingInfo(crackId(pos),pos,result.crackStage());
                     if (result.destroyed()) { p.getWorld().breakBlock(pos,true); damagedStates.remove(pos.asLong()); crackStages.remove(pos.asLong()); }
+                } else if (r.length==2 && r[0].equals("PLAYER_FALL")) {
+                    float amount=(float)Math.clamp(Math.ceil(Wire.number(r[1])-3),0,100);
+                    if (amount>0) p.damage(p.getDamageSources().fall(),amount);
                 } else if (r.length==5 && r[0].equals("PLAYER_HIT")) {
                     float amount=(float)Math.clamp(Wire.number(r[1]),0,100);
                     p.damage(p.getDamageSources().generic(),amount);
-                    Vec3d velocity=Bridge.point(r,2); if (velocity.lengthSquared()<400) { p.addVelocity(velocity); p.velocityModified=true; }
+                    Vec3d velocity=Bridge.point(r,2); if (velocity.lengthSquared()<400) event("PUSH",velocity.x,velocity.y,velocity.z);
                 }
             } catch (IllegalArgumentException ignored) { /* malformed row cannot affect game state */ }
         }
@@ -227,5 +271,8 @@ public final class MineMakers implements ModInitializer {
         for (SlimeEntity e:targets.values()) e.discard(); targets.clear(); targetIds.clear(); events.clear();
         if (linkedWorld!=null) for (long key:crackStages.keySet()) linkedWorld.setBlockBreakingInfo(crackId(BlockPos.fromLong(key)),BlockPos.fromLong(key),-1);
         damage.clear(); crackStages.clear(); damagedStates.clear(); linkedWorld=null;
+        if (linkedPlayer!=null && !linkedPlayer.isRemoved() && returnWorld!=null && returnPosition!=null)
+            linkedPlayer.teleport(returnWorld,returnPosition.x,returnPosition.y,returnPosition.z,returnYaw,returnPitch);
+        linkedPlayer=null; returnWorld=null; returnPosition=null; lastResolved=null; pendingTeleport=null;
     }
 }

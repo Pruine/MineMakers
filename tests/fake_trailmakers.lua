@@ -13,7 +13,14 @@ local function transform()
     t.Forward=function() return vector(0,0,1) end
     return t
 end
-local body={Exists=function() return true end,SetIsVisible=function(v) T.visible=v end}
+local body={Exists=function() return true end,SetIsVisible=function(v) T.visible=v end,
+    GetIsStatic=function() return T.bodyStatic or false end,SetIsStatic=function(v) T.bodyStatic=v end,
+    SetIsTrigger=function(v) T.bodyTrigger=v end}
+T.ray=function(origin,direction,distance)
+    if direction.y>=0 then return nil end
+    local t=(4-origin.y)/direction.y
+    if t>=0 and t<=distance then return t end
+end
 T.block={}
 T.block.Exists=function() return true end
 T.block.IsDead=function() return false end
@@ -46,11 +53,15 @@ tm.physics.SpawnCustomObjectRigidbody=function(p,mesh,texture,kinematic,mass,mat
     T.spawns[#T.spawns+1]=o; return o
 end
 tm.physics.RaycastData=function(origin,direction,distance,ignore)
-    return {DidHit=function() return true end,GetHitPosition=function() return vector(origin.x,4,origin.z) end}
+    local distance=T.ray(origin,direction,distance)
+    return {DidHit=function() return distance~=nil end,GetHitDistance=function() return distance end,
+        GetHitPosition=function() return vector(origin.x+direction.x*distance,origin.y+direction.y*distance,origin.z+direction.z*distance) end}
 end
 tm.players.GetPlayerGameObject=function(id) assert(id==0); return body end
 tm.players.GetPlayerTransform=function(id) assert(id==0); return transform() end
 tm.players.SetPlayerIsInvincible=function(id,v) assert(id==0); T.invincible=v end
+tm.players.GetRepairEnabled=function(id) return T.repair~=false end
+tm.players.SetRepairEnabled=function(id,v) T.repair=v end
 tm.players.GetBuilderEnabled=function(id) return T.builder end
 tm.players.SetBuilderEnabled=function(id,v) T.builder=v end
 tm.players.IsPlayerInSeat=function(id) return false end
@@ -61,7 +72,7 @@ tm.input.OnPlayerKeyDown=event(); tm.input.OnPlayerKeyUp=event()
 tm.playerUI.AddUILabel=function(id,key,value) T.labels[key]=value end
 tm.playerUI.SetUIValue=function(id,key,value) T.labels[key]=value end
 
-tm.players.AddCamera=function(id,p,r,priority) assert(id==0 and not T.camera); T.camera=true; T.cameraPosition=p end
+tm.players.AddCamera=function(id,p,r,priority) assert(id==0 and not T.camera); if T.legacyCamera and priority then error('three arguments required') end; T.camera=true; T.cameraPosition=p end
 tm.players.ActivateCamera=function(id,fade) assert(T.camera); T.cameraActive=true; T.cameraActivations=(T.cameraActivations or 0)+1 end
 tm.players.SetCameraPosition=function(id,p) assert(T.camera); T.cameraPosition=p end
 tm.players.SetCameraRotation=function(id,d) assert(T.camera); T.cameraDirection=d end

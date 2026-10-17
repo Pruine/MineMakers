@@ -2,7 +2,10 @@
   "required": true,
   "package": "dev.minemakers.mixin",
   "compatibilityLevel": "JAVA_21",
-  "mixins": [],
+  "mixins": [
+    "HostPlayerMovementMixin",
+    "HostPlayerNetworkMixin"
+  ],
   "client": [
     "KeyBindingAccessor",
     "MouseInvoker",

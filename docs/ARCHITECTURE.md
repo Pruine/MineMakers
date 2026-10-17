@@ -6,8 +6,8 @@ and documented Trailmakers Lua, communicating through a shared local directory.
 Version 0.2 adds a Windows layered-window compositor and explicit desktop input
 forwarding, plus transparent export of the real vanilla hand/HUD/GUI. This is an
 out-of-process desktop overlay, not a native Trailmakers graphics plugin.
-Minecraft owns its world and vanilla rules. Trailmakers owns contraptions and host
-physics. The Java singleplayer server drives snapshots; client input is mirrored
+Minecraft owns inventory, item/world interactions, health and game modes. Trailmakers
+owns player motion, contraptions and host physics. The Java singleplayer server drives snapshots; client input is mirrored
 through actual vanilla key bindings. Opening a Minecraft screen releases bridged keys.
 
 ```mermaid
@@ -22,10 +22,12 @@ flowchart LR
 - Only an explicit `/minemakers link` enables the bridge, and only in integrated
   singleplayer. It uses the existing world in its current dimension; changing
   dimension unlinks it. No worktrees are needed for development; use this checkout.
-- Minecraft's link-time block position becomes the integer origin. Trailmakers'
-  player position at handshake becomes the host anchor. One block is one metre,
-  +Y is up and +Z matches Minecraft south. Host collider rows are origin-relative.
-- Vanilla barrier blocks represent sampled host ground. We never overwrite non-air
+- Minecraft uses origin (0,128,0) in the isolated `minemakers:trailmakers` dimension.
+  Trailmakers player position at handshake becomes the host anchor. One block is
+  one metre; +Y is up and +Z matches south. X is reflected at every host conversion
+  because Minecraft and Unity have opposite handedness.
+- Vanilla barrier blocks represent sampled host ground for item targeting/projectiles,
+  independently of player physics. We never overwrite non-air
   Minecraft blocks. Up to 2,048 owned barriers, 512 collider rows and 64 contraption
   proxies are accepted. Native `GetSize()` units are configurable; target sizes are
   exported but currently represented by small invisible slimes, not matching meshes.
@@ -63,6 +65,7 @@ Java ignores control/damage rows until this matches its current session.
 
 | Tag | Fields after tag |
 |---|---|
+| CAPS | HOST_MOTION_1 (required capability) |
 | HOST_SESSION | host session token |
 | PLAYER | relative x y z, yaw, pitch, health, creative 0/1, alive 0/1, armor points |
 | ORIGIN | absolute Minecraft origin x y z |
@@ -76,6 +79,7 @@ Java ignores control/damage rows until this matches its current session.
 
 | Tag | Fields after tag |
 |---|---|
+| HOST_POSE | resolved relative x y z, yaw, pitch, grounded, flying, crouch |
 | LINK | current Minecraft session token |
 | ACK | highest applied Minecraft event ID |
 | INPUT | forward back left right jump sneak attack use (0/1), yaw, pitch, reserved 0, hotbar slot 0–8 |
@@ -130,13 +134,30 @@ not proof of behavior on a particular installed Trailmakers version.
 
 ## 0.2 camera and desktop rendering
 
-`view.frame` uses the same MMT1 framing and Minecraft session token as scene output.
-Its single `VIEW x y z yaw pitch eyeHeight menuOpen` row is published by the client
-at tick rate, independently of the 5 Hz scene/block export. Lua creates a custom
-first-person camera, places it at the real eye height, and converts Minecraft look
-to a Unity direction vector. Disconnect removes only this owned camera. A slower
-scene snapshot cannot rewind an already-received view. The native body is rotated
-with the view and avatar cubes are hidden in first person.
+`control.frame` uses MMT1 framing and the Minecraft session token. Its single
+`CONTROL forward sideways jump sneak sprint flying creative yaw pitch eyeHeight menu reserved`
+row carries current intent at render rate. Lua integrates a local controller in
+substeps no larger than 1/120 second, resolving motion against live host rays.
+`HOST_POSE` returns the result. Only the linked Minecraft player has `Entity.move`
+and server move-packet processing cancelled; it follows that result without a
+second physics solver. Other Minecraft entities and unlinked players are unchanged.
+Scene snapshots never overwrite host position. Reliable TELEPORT and PUSH events
+carry absolute Minecraft teleports and incoming knockback back to Lua; PLAYER_FALL
+reports host landing distance to Minecraft health logic.
+
+Camera position comes directly from the host controller, not a Minecraft return
+trip. Camera creation falls back from the four-argument priority API to the earlier
+three-argument overload. Activation occurs once per link. The retained native body
+is hidden, static and a trigger so it cannot intercept collision rays or compete
+with movement. Disconnect restores body/build/repair settings and removes the camera.
+
+Linking transfers the Minecraft player into the dedicated empty host dimension;
+unlink returns it to its original world and pose. Temporary barriers and blocks
+are confined to that dimension. No ordinary Minecraft terrain can enter the host
+player's collision path. Host motion freezes while no fresh control arrives.
+
+Ray probes are an approximation, not capsule casts. Thin features between probes,
+penetration by fast moving contraptions, and riding moving platforms are limitations.
 
 When Minecraft has focus, the legacy input bridge leaves its controls and view
 alone. Otherwise the Windows desktop input has priority over the Lua keyboard
@@ -178,7 +199,7 @@ export opaque. First-person perspective is selected during capture and the old
 perspective is restored on release. This path targets vanilla rendering; shader
 and renderer replacement mods are not validated.
 
-`overlay.bgra` is atomic binary output, at most 1280×720 and 15 FPS. The 100-byte
+`overlay.bgra` is atomic binary output, at most 1280×720 and 30 FPS. The 100-byte
 little-endian header is `<4sIIIQQI64s`: `MMOV`, version 1, width, height, image
 sequence, acknowledged desktop event ID, flags (bit 0 = menu open), and zero-padded
 ASCII desktop session token. Bottom-up BGRA pixel rows follow. GL blending produces

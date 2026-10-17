@@ -36,27 +36,22 @@ public final class Bridge implements AutoCloseable {
             if (old==null || !old.wire().session().equals(f.session()) || f.sequence()>old.wire().sequence()) desktop=new HostFrame(f,System.nanoTime());
         } catch (IOException | IllegalArgumentException ignored) { }
         try {
-            Wire.Frame v=view;
-            if (v!=null && v.sequence()>viewWritten) { Wire.write(directory.resolve("view.frame"),v); viewWritten=v.sequence(); }
-        } catch (IOException ignored) { }
-    }
-    private void exchangeScene() {
-        try {
             Wire.Frame frame=Wire.read(directory.resolve("trailmakers.frame"));
             HostFrame old=incoming;
             if (old==null || !old.wire().session().equals(frame.session()) || frame.sequence()>old.wire().sequence())
                 incoming=new HostFrame(frame,System.nanoTime());
+            lastError="";
+        } catch (IOException | IllegalArgumentException e) { lastError=e.toString(); }
+        try {
+            Wire.Frame v=view;
+            if (v!=null && v.sequence()>viewWritten) { Wire.write(directory.resolve("control.frame"),v); viewWritten=v.sequence(); }
+        } catch (IOException ignored) { }
+    }
+    private void exchangeScene() {
+        try {
             Wire.Frame send=outgoing;
             if (send!=null && send.sequence()>written) { Wire.write(directory.resolve("minecraft.frame"),send); written=send.sequence(); }
-            lastError="";
-        } catch (IOException | IllegalArgumentException e) {
-            lastError=e.getClass().getSimpleName()+": "+e.getMessage();
-            // Output must still be published before the first host frame exists.
-            try {
-                Wire.Frame send=outgoing;
-                if (send!=null && send.sequence()>written) { Wire.write(directory.resolve("minecraft.frame"),send); written=send.sequence(); }
-            } catch (IOException ignored) { lastError="Cannot write bridge directory"; }
-        }
+        } catch (IOException e) { lastError="Cannot write bridge directory: "+e.getMessage(); }
     }
     public HostFrame current() {
         HostFrame f=incoming;

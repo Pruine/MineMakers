@@ -1,9 +1,9 @@
 # Validation record and in-game acceptance
 
-Current cloud validation:
+Current cloud validation (native Trailmakers and Windows checks remain unrun):
 
 - PASS: full Fabric/Loom Java 21 compile, resource processing and remapped JAR build.
-- PASS: 115 Java protocol and accumulated-damage assertions, including every truncated
+- PASS: 119 Java protocol and accumulated-damage assertions, including every truncated
   prefix of a representative frame, nonfinite numbers, blast hit caps, resistance,
   unbreakable blocks, monotonic cracks, destruction and state reset.
 - PASS: Python/Lua 5.2 tests for protocol framing and Java↔Lua interoperability.
@@ -34,7 +34,10 @@ Run these checks on the supported local game installations before calling the mo
    text input. F8/focus loss must release capture. Then verify
    vanilla W/A/S/D, jump, crouch, double-Space creative flight, ascent/descent, yaw,
    pitch, attack and use work while Trailmakers has focus. Menus release input.
-3. Place wood/stone/bedrock/TNT on sampled ground. Walk a Trailmakers player into
+3. Check that linking enters the isolated host dimension and `/unlink` returns to
+   the original Minecraft world. Walk into native walls, under ceilings and across
+   slopes/platforms; test all four cardinal directions and crouch edges.
+   Place wood/stone/bedrock/TNT on sampled ground. Walk a Trailmakers player into
    them and drive a contraption into them; check collision, scale and stability.
 4. Mine a block, relog, and confirm Minecraft saves it. Confirm the corresponding
    Trailmakers object is removed and no duplicate collider remains after reconnect.
@@ -60,3 +63,12 @@ Run these checks on the supported local game installations before calling the mo
 Completing items 9–10 requires the missing native plugin, the installed Trailmakers
 version/API assemblies, and engine-specific testing. No current test result asserts
 that those two requirements work.
+
+0.3 validation additionally covers host-owned Lua locomotion against geometric ray
+fixtures (cardinal directions, fractional-height floors, thin platforms, walls,
+ceilings, stairs, crouch edges, flight and frame-rate variation). With the actual
+Minecraft client and simulated host rays, remote W at yaw 90 moved 6.50 m along
+host +X and A moved 4.27 m along host +Z; the Minecraft proxy followed at the same
+height without void falling or correction warnings. The real inventory opened,
+vanilla double-Space enabled host flight, and survival landed on host ground.
+These checks simulate the Trailmakers API; they do not validate its native camera.

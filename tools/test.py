@@ -12,6 +12,9 @@ from desktop_protocol import HEADER, InputQueue, decode_overlay, resolve_directo
 from lupa.lua52 import LuaRuntime
 
 ROOT = Path(__file__).resolve().parents[1]
+import sys
+sys.path.insert(0,str(ROOT/'tests'))
+from test_locomotion import LocomotionTests
 class Tests(unittest.TestCase):
     def setUp(self):
         self.lua = LuaRuntime(unpack_returned_tuples=True)
@@ -26,36 +29,19 @@ class Tests(unittest.TestCase):
         for bad in ['NaN', 'inf', '30000001']:
             with self.assertRaises(Exception): self.wire.number(bad)
         with self.assertRaises(Exception): self.wire.encode('test',1,self.rows([['BAD\nROW']]))
-    def test_view_smoothing(self):
-        module=self.lua.execute((ROOT/'mod/data_static/view_smoother.lua').read_text())
-        smooth=module.new(0.035,4)
-        def pose(x,yaw):
-            return self.lua.table_from(dict(pos=self.lua.table_from(dict(x=x,y=0,z=0)),yaw=yaw,pitch=0,eyeHeight=1.62))
-        self.assertIsNone(smooth.sample(smooth,0))
-        smooth.push(smooth,pose(0,359),1)
-        smooth.push(smooth,pose(2,1),1.1)
-        mid=smooth.sample(smooth,1.085)
-        self.assertAlmostEqual(mid.pos.x,1)
-        self.assertAlmostEqual(mid.yaw,360)
-        self.assertFalse(smooth.push(smooth,pose(1,90),0.9))
-        self.assertAlmostEqual(smooth.sample(smooth,3).pos.x,2) # stalled stream must not drift
-        smooth.push(smooth,pose(20,90),3) # teleport snaps, never flies through intervening walls
-        self.assertAlmostEqual(smooth.sample(smooth,3).pos.x,20)
-        smooth.reset(smooth)
-        self.assertIsNone(smooth.sample(smooth,4))
-
     def test_native_adapter(self):
         self.lua.globals().TEST_ROOT = str(ROOT)
         self.lua.execute((ROOT/'tests/fake_trailmakers.lua').read_text())
         self.lua.execute((ROOT/'mod/main.lua').read_text())
         test = self.lua.globals().TEST
+        test.legacyCamera=True # exercise older AddCamera(player, position, direction) overload
         def tick(time):
             test.time = time
             self.lua.globals().update()
         tick(0.3)
         host = self.wire.decode(test.files['trailmakers.frame'])
         def snapshot(seq, blocks=True, creative=False, damage=False, stage=-1, session='mc_test'):
-            rows = [['HOST_SESSION',host.session],['PLAYER',0,0,0,0,0,20,1 if creative else 0,1,0],['ORIGIN',0,80,0]]
+            rows = [['CAPS','HOST_MOTION_1'],['HOST_SESSION',host.session],['PLAYER',0,0,0,0,0,20,1 if creative else 0,1,0],['ORIGIN',0,80,0]]
             if blocks: rows.append(['BLOCK',2,0,2,'minecraft:stone',stage])
             if damage: rows.append(['EVENT',1,'HIT','b1',4,0,0,1,3,'Generic'])
             test.files['minecraft.frame'] = self.wire.encode(session,seq,self.rows(rows))
@@ -86,26 +72,31 @@ class Tests(unittest.TestCase):
         tick(2.1)
         out = self.wire.decode(test.files['trailmakers.frame'])
         self.assertTrue(any(r[1]=='EVENT' and r[3]=='BLOCK_HIT' for _,r in out.records.items()))
-        # A high-frequency view frame owns camera orientation independently of old scene snapshots.
-        test.files['view.frame']=self.wire.encode('mc_test',1,self.rows([['VIEW',3,2,4,90,30,1.54,0]]))
+        # Camera and movement use the same intent; Minecraft positions cannot move the host.
+        test.files['control.frame']=self.wire.encode('mc_test',1,self.rows([['CONTROL',0,0,0,0,0,0,0,90,30,1.54,0,0]]))
         tick(2.25)
-        self.assertAlmostEqual(test.cameraPosition.y,8.54)
-        self.assertAlmostEqual(test.cameraDirection.x,-0.8660254037844386)
+        self.assertAlmostEqual(test.cameraDirection.x,0.8660254037844386)
         self.assertAlmostEqual(test.cameraDirection.y,-0.5)
-        test.files['view.frame']=self.wire.encode('wrong_session',99,self.rows([['VIEW',0,0,0,0,0,1.62,0]]))
+        self.assertTrue(test.bodyStatic)
+        self.assertTrue(test.bodyTrigger)
         before=test.cameraActivations
+        test.files['control.frame']=self.wire.encode('wrong_session',99,self.rows([['CONTROL',1,0,0,0,0,0,0,0,0,1.62,0,0]]))
         tick(2.4)
-        self.assertGreater(test.cameraActivations,before)
-        self.assertAlmostEqual(test.cameraPosition.y,8.54)
+        self.assertEqual(test.cameraActivations,before,'Do not restart native camera activation each frame')
+        self.assertAlmostEqual(test.cameraDirection.x,0.8660254037844386)
         snapshot(5,blocks=False)
         tick(2.7)
-        self.assertAlmostEqual(test.cameraPosition.y,8.54, msg="A slower scene snapshot must not rewind the view stream")
+        self.assertAlmostEqual(test.cameraDirection.x,0.8660254037844386)
+        self.assertGreater(test.cameraPosition.y,5,'Host ground must support the camera independently of Minecraft')
         # A frozen file is stale even though it can still be read successfully.
         tick(4.8)
         self.assertTrue(test.builder)
         self.assertFalse(test.camera)
         self.assertFalse(test.cameraActive)
         self.assertTrue(test.visible)
+        self.assertFalse(test.bodyStatic)
+        self.assertFalse(test.bodyTrigger)
+        self.assertTrue(test.repair)
         self.assertFalse(test.invincible)
         self.assertFalse(any(v.alive for _,v in test.spawns.items()))
     def test_windows_locked_frame_recovery(self):
@@ -182,7 +173,7 @@ class Tests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             d=Path(directory)
             (d/'lua.frame').write_text(self.wire.encode('lua_test',1,self.rows([['ACK',1],['LINK','session_1']])))
-            files=[ROOT/'fabric/src/main/java/dev/minemakers/bridge'/f for f in ('Wire.java','BlockDamage.java','DesktopInput.java')]
+            files=[ROOT/'fabric/src/main/java/dev/minemakers/bridge'/f for f in ('Wire.java','BlockDamage.java','DesktopInput.java','HostPose.java')]
             subprocess.run([javac,'--release','21','-d',str(d),*[str(p) for p in files],str(ROOT/'tests/ProtocolTest.java')],check=True)
             subprocess.run([java,'-cp',str(d),'ProtocolTest',str(d)],check=True)
             decoded=self.wire.decode((d/'java.frame').read_text())

@@ -1,6 +1,7 @@
 import dev.minemakers.bridge.Wire;
 import dev.minemakers.bridge.BlockDamage;
 import dev.minemakers.bridge.DesktopInput;
+import dev.minemakers.bridge.HostPose;
 import java.nio.file.*;
 import java.util.*;
 
@@ -23,6 +24,13 @@ public final class ProtocolTest {
         for (String n:List.of("NaN","Infinity","-Infinity","30000001")) {
             boolean invalid=false; try { Wire.number(n); } catch (IllegalArgumentException e) { invalid=true; } check(invalid);
         }
+        var hostRows=List.of(new String[]{"LINK","mc_session"},new String[]{"HOST_POSE","1","2","3","90","-30","1","0","0"});
+        var hostFrame=new Wire.Frame("host",1,hostRows);
+        var pose=HostPose.read(hostFrame,"mc_session");
+        check(pose!=null && pose.x()==1 && pose.yaw()==90 && pose.grounded());
+        check(HostPose.read(hostFrame,"stale_session")==null);
+        check(HostPose.read(new Wire.Frame("host",2,List.<String[]>of(new String[]{"LINK","mc_session"})),"mc_session")==null);
+        check(HostPose.read(new Wire.Frame("host",3,List.of(new String[]{"LINK","mc_session"},new String[]{"HOST_POSE","NaN","2","3","0","0","1","0","0"})),"mc_session")==null);
         var damage=new BlockDamage();
         var wood=damage.hit(1,20,40,1,false); var stone=damage.hit(2,20,120,2,false);
         check(wood.remaining()==26 && stone.remaining()==110);

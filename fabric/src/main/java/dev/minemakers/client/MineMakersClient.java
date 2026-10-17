@@ -16,6 +16,7 @@ public final class MineMakersClient implements ClientModInitializer {
     private Boolean oldPause;
 
     @Override public void onInitializeClient() { ClientTickEvents.START_CLIENT_TICK.register(this::tick);
+        ClientTickEvents.END_CLIENT_TICK.register(HostMotionClient::tick);
         net.fabricmc.fabric.api.client.rendering.v1.WorldRenderEvents.START.register(context -> ViewStream.publish(context.camera())); }
     public static void renderInput() {
         MinecraftClient mc=MinecraftClient.getInstance();
