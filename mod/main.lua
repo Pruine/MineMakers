@@ -15,6 +15,12 @@ local player=nil
 local mcOrigin={x=0,y=0,z=0}
 local slot=0
 local pitch=0
+local lookYaw=0
+local camera=false
+local lastViewSeq=-1
+local lastViewRead=-100
+local lastScene=-100
+local sceneRows={}
 local oldBuilder=nil
 local linked=false
 local warned=false
@@ -40,7 +46,30 @@ local function cube(p,tex,scale,solid)
     if solid then o.SetIsStatic(true) end
     return o
 end
+local function applyView(p)
+    if not linked or not p then return end
+    local t=tm.players.GetPlayerTransform(C.playerId)
+    if not tm.players.IsPlayerInSeat(C.playerId) then
+        t.SetPosition(world(p.pos)); t.SetRotation(0,-p.yaw,0)
+    end
+    if C.firstPerson~=false then
+        local eye=world(point(p.pos.x,p.pos.y+(p.eyeHeight or C.eyeHeight or 1.62),p.pos.z))
+        if not camera then
+            tm.players.AddCamera(C.playerId,eye,V(0,0,0),1000)
+            camera=true
+            tm.players.ActivateCamera(C.playerId,0)
+        end
+        local yaw=p.yaw*math.pi/180; local pitchRad=p.pitch*math.pi/180
+        tm.players.SetCameraPosition(C.playerId,eye)
+        tm.players.SetCameraRotation(C.playerId,V(-math.sin(yaw)*math.cos(pitchRad),-math.sin(pitchRad),math.cos(yaw)*math.cos(pitchRad)))
+    end
+end
 local function cleanup()
+    if camera then
+        tm.players.DeactivateCamera(C.playerId,0)
+        tm.players.RemoveCamera(C.playerId)
+        camera=false
+    end
     for _,b in pairs(objects) do destroy(b.object) end
     for _,e in pairs(entities) do destroy(e) end
     for _,a in pairs(avatar) do destroy(a) end
@@ -79,7 +108,7 @@ local function commit(rows,newSession)
         elseif r[1]=='ORIGIN' then origin=pos(r[2],r[3],r[4]) end
     end
     if not p or not handshaken then error('Waiting for current host handshake') end
-    if newSession then cleanup(); lastEvent=0 end
+    if newSession then cleanup(); lastEvent=0; lastViewSeq=-1; sceneRows={}; lastScene=-100 end
     if not anchor then
         local q=tm.players.GetPlayerTransform(C.playerId).GetPositionWorld()
         anchor=point(q.x,q.y,q.z)
@@ -89,11 +118,16 @@ local function commit(rows,newSession)
         tm.players.SetBuilderEnabled(C.playerId,false)
         linked=true
     end
+    if lastViewSeq>=0 and player then
+        p.pos=player.pos; p.yaw=player.yaw; p.pitch=player.pitch; p.eyeHeight=player.eyeHeight
+    end
     player=p; if origin then mcOrigin=origin end
     local body=tm.players.GetPlayerGameObject(C.playerId)
     if exists(body) then body.SetIsVisible(false) end
     tm.players.SetPlayerIsInvincible(C.playerId,p.creative)
-    if not tm.players.IsPlayerInSeat(C.playerId) then tm.players.GetPlayerTransform(C.playerId).SetPosition(world(p.pos)) end
+    if not keys.j and not keys.l then lookYaw=p.yaw end
+    if not keys.up and not keys.down then pitch=p.pitch end
+    applyView(p)
     local seen={}
     for _,b in ipairs(blocks) do
         local k=key(b.pos); seen[k]=true; local previous=objects[k]
@@ -121,7 +155,7 @@ local function commit(rows,newSession)
     local angle=-p.yaw*math.pi/180
     for _,a in ipairs(parts) do
         if not avatar[a.name] then avatar[a.name]=cube(p.pos,a.tex,a.scale,false) end
-        local o=avatar[a.name]; o.SetIsVisible(p.alive); o.SetTexture(a.tex)
+        local o=avatar[a.name]; o.SetIsVisible(p.alive and C.firstPerson==false); o.SetTexture(a.tex)
         o.GetTransform().SetPosition(world(point(p.pos.x+a.x*math.cos(angle),p.pos.y+a.y,p.pos.z+a.x*math.sin(angle))))
         o.GetTransform().SetRotation(0,-p.yaw,0)
     end
@@ -197,16 +231,38 @@ local function terrain(rows)
     end end
 end
 local function flag(k) return keys[k] and 1 or 0 end
+local function readView(now)
+    if not linked or not mcSession then return end
+    local ok,text=pcall(tm.os.ReadAllText_Dynamic,'view.frame')
+    if not ok then return end
+    local valid,frame=pcall(W.decode,text)
+    if not valid or frame.session~=mcSession or frame.sequence<=lastViewSeq or #frame.records~=1 then return end
+    local r=frame.records[1]
+    if #r~=8 or r[1]~='VIEW' then return end
+    local p={pos=pos(r[2],r[3],r[4]),yaw=W.number(r[5]),pitch=W.number(r[6]),eyeHeight=W.number(r[7])}
+    if p.eyeHeight<0 or p.eyeHeight>3 then return end
+    applyView(p)
+    player.pos=p.pos; player.yaw=p.yaw; player.pitch=p.pitch; player.eyeHeight=p.eyeHeight
+    if not keys.j and not keys.l then lookYaw=p.yaw end
+    if not keys.up and not keys.down then pitch=p.pitch end
+    lastViewSeq=frame.sequence; lastFresh=now
+end
 local function write()
     seq=seq+1
     local rows={}
     if linked and player and mcSession then
-        local f=tm.players.GetPlayerTransform(C.playerId).Forward()
-        local yaw=math.atan2(-f.x,f.z)*180/math.pi
+        local dt=C.inputInterval or C.interval
+        lookYaw=lookYaw+((keys.l and 1 or 0)-(keys.j and 1 or 0))*(C.turnSpeed or 120)*dt
+        pitch=math.max(-89,math.min(89,pitch+((keys.down and 1 or 0)-(keys.up and 1 or 0))*(C.turnSpeed or 120)*dt))
+        local yaw=lookYaw
         rows[#rows+1]={'LINK',mcSession}
         rows[#rows+1]={'ACK',lastEvent}
         rows[#rows+1]={'INPUT',flag('w'),flag('s'),flag('a'),flag('d'),flag('space'),flag('left shift'),flag('f'),flag('g'),yaw,pitch,0,slot}
-        targets(rows); terrain(rows)
+        local now=tm.os.GetRealtimeSinceStartup()
+        if now-lastScene>=C.interval then
+            lastScene=now; sceneRows={}; targets(sceneRows); terrain(sceneRows)
+        end
+        for _,row in ipairs(sceneRows) do rows[#rows+1]=row end
         for _,event in ipairs(pending) do rows[#rows+1]=event end
     end
     tm.os.WriteAllText_Dynamic('trailmakers.frame',W.encode(session,seq,rows))
@@ -215,12 +271,16 @@ local function keyDown(p,k)
     if p.playerId~=C.playerId then return end
     k=string.lower(k); keys[k]=true
     local n=tonumber(k); if n and n>=1 and n<=9 then slot=n-1 end
-    if k=='up' then pitch=math.max(-85,pitch-5) end
-    if k=='down' then pitch=math.min(85,pitch+5) end
+
 end
 local function keyUp(p,k) if p.playerId==C.playerId then keys[string.lower(k)]=false end end
 function update()
     local now=tm.os.GetRealtimeSinceStartup()
+    if now-lastViewRead>=(C.viewInterval or 0.02) then
+        lastViewRead=now
+        local ok,err=pcall(readView,now)
+        if not ok and not warned then tm.os.Log('MineMakers camera: '..tostring(err)); warned=true end
+    end
     if now-lastRead>=C.interval then
         lastRead=now
         local ok,text=pcall(tm.os.ReadAllText_Dynamic,'minecraft.frame')
@@ -236,7 +296,7 @@ function update()
         end
         if now-lastFresh>C.timeout and linked then cleanup(); keys={}; message('Java disconnected; controls restored') end
     end
-    if now-lastWrite>=C.interval then
+    if now-lastWrite>=(C.inputInterval or C.interval) then
         lastWrite=now
         local ok,err=pcall(write)
         if not ok and not warned then tm.os.Log('MineMakers bridge: '..tostring(err)); warned=true end

@@ -18,6 +18,9 @@ public final class Bridge implements AutoCloseable {
     });
     private final String session=UUID.randomUUID().toString();
     private volatile HostFrame incoming;
+    private volatile HostFrame desktop;
+    private volatile Wire.Frame view;
+    private long viewWritten=-1;
     private volatile Wire.Frame outgoing;
     private volatile String lastError="waiting for Trailmakers";
     private long written=-1;
@@ -26,6 +29,15 @@ public final class Bridge implements AutoCloseable {
         worker.scheduleWithFixedDelay(this::exchange,0,50,TimeUnit.MILLISECONDS);
     }
     private void exchange() {
+        try {
+            Wire.Frame f=Wire.read(directory.resolve("desktop.frame"));
+            HostFrame old=desktop;
+            if (old==null || !old.wire().session().equals(f.session()) || f.sequence()>old.wire().sequence()) desktop=new HostFrame(f,System.nanoTime());
+        } catch (IOException | IllegalArgumentException ignored) { }
+        try {
+            Wire.Frame v=view;
+            if (v!=null && v.sequence()>viewWritten) { Wire.write(directory.resolve("view.frame"),v); viewWritten=v.sequence(); }
+        } catch (IOException ignored) { }
         try {
             Wire.Frame frame=Wire.read(directory.resolve("trailmakers.frame"));
             HostFrame old=incoming;
@@ -47,6 +59,12 @@ public final class Bridge implements AutoCloseable {
         HostFrame f=incoming;
         return f!=null && System.nanoTime()-f.receivedNanos()<2_000_000_000L ? f : null;
     }
+    public Path directory() { return directory; }
+    public HostFrame desktop() {
+        HostFrame f=desktop;
+        return f!=null && System.nanoTime()-f.receivedNanos()<750_000_000L ? f : null;
+    }
+    public void publishView(long sequence,List<String[]> rows) { view=new Wire.Frame(session,sequence,List.copyOf(rows)); }
     public String session() { return session; }
     public String error() { return lastError; }
     public void publish(long sequence,List<String[]> rows) { outgoing=new Wire.Frame(session,sequence,List.copyOf(rows)); }

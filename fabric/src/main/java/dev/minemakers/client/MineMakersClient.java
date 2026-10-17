@@ -14,6 +14,7 @@ import java.util.Map;
 public final class MineMakersClient implements ClientModInitializer {
     private final Map<KeyBinding,Boolean> held=new HashMap<>();
     private Boolean oldPause;
+    private long viewSequence;
     @Override public void onInitializeClient() { ClientTickEvents.START_CLIENT_TICK.register(this::tick); }
     private void key(KeyBinding key,boolean down) {
         boolean previous=held.getOrDefault(key,false);
@@ -27,8 +28,14 @@ public final class MineMakersClient implements ClientModInitializer {
             if (oldPause==null) oldPause=mc.options.pauseOnLostFocus;
             mc.options.pauseOnLostFocus=false;
         }
+        if (bridge!=null && mc.player!=null) {
+            var at=mc.player.getPos().subtract(MineMakers.origin());
+            bridge.publishView(++viewSequence,java.util.List.<String[]>of(Bridge.row("VIEW",at.x,at.y,at.z,mc.player.getYaw(),mc.player.getPitch(),mc.player.getEyeY()-mc.player.getY(),mc.currentScreen!=null ? 1 : 0)));
+        }
+        boolean desktop=DesktopController.tick(mc,bridge);
+        OverlayCapture.tick(mc);
         Bridge.Input input=bridge==null ? null : Bridge.input(bridge.current(),bridge.session());
-        if (input==null || mc.player==null || mc.currentScreen!=null) {
+        if (desktop || mc.isWindowFocused() || input==null || mc.player==null || mc.currentScreen!=null) {
             for (KeyBinding key:held.keySet()) key.setPressed(false);
             held.clear();
             if (bridge==null && oldPause!=null) { mc.options.pauseOnLostFocus=oldPause; oldPause=null; }

@@ -3,15 +3,24 @@
 Current cloud validation:
 
 - PASS: full Fabric/Loom Java 21 compile, resource processing and remapped JAR build.
-- PASS: 112 Java protocol and accumulated-damage assertions, including every truncated
+- PASS: 115 Java protocol and accumulated-damage assertions, including every truncated
   prefix of a representative frame, nonfinite numbers, blast hit caps, resistance,
   unbreakable blocks, monotonic cracks, destruction and state reset.
 - PASS: Python/Lua 5.2 tests for protocol framing and Java↔Lua interoperability.
 - PASS: adapter contract test for physical object creation, crack texture updates,
   acknowledged combat event deduplication, damage/impulse forwarding, object removal,
   malformed frames and stale-file cleanup/control restoration.
-- UNRUN: Trailmakers execution, actual MoonSharp behavior, dual-game input, native
-  physics/camera/targeting, Minecraft client startup, and gameplay across both games.
+- PASS: actual Minecraft 1.21.1 development client startup under Xvfb/Mesa with the
+  client mixins loaded; a creative singleplayer world was opened.
+- PASS: real transparent BGRA export of the vanilla hand, crosshair and hotbar;
+  the 854×480 test frame contained both transparent background and opaque UI/hand pixels.
+- PASS: desktop-protocol mouse delta rotated the actual Minecraft player to 45°;
+  E opened the real creative inventory; remote slot clicks placed an oak log into
+  hotbar slot 1; E closed it. These are real game behavior checks, not fake-API tests.
+- PASS: a remote Escape opened the Minecraft pause menu while the linked server's
+  snapshot sequence continued advancing, preventing host timeout during menus.
+- UNRUN: Windows layered-window composition, Windows input hooks/raw mouse, actual
+  Trailmakers/MoonSharp camera behavior, native physics/targeting and both games together.
 - NOT IMPLEMENTED: native hit interception and custom auto-aim registration.
 - Gradle reports `test NO-SOURCE`; it is not evidence that gameplay tests ran. The
   separate `tools/test.py` harness supplies the test results above.
@@ -20,7 +29,10 @@ Run these checks on the supported local game installations before calling the mo
 
 1. Both sides complete the fresh-session handshake. Pre-existing frame files cannot
    take control; stop either game and check that controls release within two seconds.
-2. Vanilla W/A/S/D, jump, crouch, double-Space creative flight, ascent/descent, yaw,
+2. Start `tools/desktop_overlay.py` on Windows, focus borderless/windowed Trailmakers,
+   press F8, and verify the real HUD, fist/held item, E inventory, clicks, dragging and
+   text input. F8/focus loss must release capture. Then verify
+   vanilla W/A/S/D, jump, crouch, double-Space creative flight, ascent/descent, yaw,
    pitch, attack and use work while Trailmakers has focus. Menus release input.
 3. Place wood/stone/bedrock/TNT on sampled ground. Walk a Trailmakers player into
    them and drive a contraption into them; check collision, scale and stability.

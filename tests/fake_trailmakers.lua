@@ -59,3 +59,10 @@ tm.players.OnPlayerLeft=event(); tm.players.OnPlayerDied=event()
 tm.input.OnPlayerKeyDown=event(); tm.input.OnPlayerKeyUp=event()
 tm.playerUI.AddUILabel=function(id,key,value) T.labels[key]=value end
 tm.playerUI.SetUIValue=function(id,key,value) T.labels[key]=value end
+
+tm.players.AddCamera=function(id,p,r,priority) assert(id==0 and not T.camera); T.camera=true; T.cameraPosition=p end
+tm.players.ActivateCamera=function(id,fade) assert(T.camera); T.cameraActive=true end
+tm.players.SetCameraPosition=function(id,p) assert(T.camera); T.cameraPosition=p end
+tm.players.SetCameraRotation=function(id,d) assert(T.camera); T.cameraDirection=d end
+tm.players.DeactivateCamera=function(id,fade) T.cameraActive=false end
+tm.players.RemoveCamera=function(id) T.camera=false end

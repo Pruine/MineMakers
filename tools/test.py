@@ -6,6 +6,8 @@ import shutil
 import subprocess
 import tempfile
 import unittest
+import struct
+from desktop_protocol import HEADER, InputQueue, decode_overlay
 from lupa.lua52 import LuaRuntime
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -41,6 +43,10 @@ class Tests(unittest.TestCase):
         snapshot(1,creative=True); tick(0.6)
         self.assertTrue(test.invincible)
         self.assertFalse(test.builder)
+        self.assertTrue(test.camera)
+        self.assertAlmostEqual(test.cameraPosition.y,6.62)
+        self.assertAlmostEqual(test.cameraDirection.z,1)
+        self.assertFalse(any(v.visible for _,v in test.spawns.items() if v.trigger), 'First-person camera must not be inside a visible avatar head')
         solid = [v for _,v in test.spawns.items() if v.alive and not v.trigger]
         self.assertEqual(len(solid),1)
         self.assertEqual(solid[0].texture,'stone_0')
@@ -60,12 +66,52 @@ class Tests(unittest.TestCase):
         tick(2.1)
         out = self.wire.decode(test.files['trailmakers.frame'])
         self.assertTrue(any(r[1]=='EVENT' and r[3]=='BLOCK_HIT' for _,r in out.records.items()))
+        # A high-frequency view frame owns camera orientation independently of old scene snapshots.
+        test.files['view.frame']=self.wire.encode('mc_test',1,self.rows([['VIEW',3,2,4,90,30,1.54,0]]))
+        tick(2.25)
+        self.assertAlmostEqual(test.cameraPosition.y,8.54)
+        self.assertAlmostEqual(test.cameraDirection.x,-0.8660254037844386)
+        self.assertAlmostEqual(test.cameraDirection.y,-0.5)
+        test.files['view.frame']=self.wire.encode('wrong_session',99,self.rows([['VIEW',0,0,0,0,0,1.62,0]]))
+        tick(2.4)
+        self.assertAlmostEqual(test.cameraPosition.y,8.54)
+        snapshot(5,blocks=False)
+        tick(2.7)
+        self.assertAlmostEqual(test.cameraPosition.y,8.54, msg="A slower scene snapshot must not rewind the view stream")
         # A frozen file is stale even though it can still be read successfully.
-        tick(4.2)
+        tick(4.8)
         self.assertTrue(test.builder)
+        self.assertFalse(test.camera)
+        self.assertFalse(test.cameraActive)
         self.assertTrue(test.visible)
         self.assertFalse(test.invincible)
         self.assertFalse(any(v.alive for _,v in test.spawns.items()))
+    def test_overlay_framing_and_input_ack(self):
+        queue=InputQueue()
+        queue.event('KEY',69,1,0)
+        queue.event('CHAR',101)
+        queue.held.add(69)
+        # Input snapshots must be understood by the same Lua/Java text framing.
+        snapshot=self.wire.decode(queue.frame(True))
+        self.assertEqual(snapshot.session,queue.session)
+        self.assertEqual(snapshot.records[1][1],'ACTIVE')
+        raw=HEADER.pack(b'MMOV',1,2,2,7,1,1,queue.session.encode())+bytes(range(16))
+        overlay=decode_overlay(raw)
+        self.assertTrue(overlay.menu)
+        self.assertEqual(overlay.pixels,bytes(range(16)))
+        for cut in range(len(raw)):
+            with self.assertRaises(ValueError): decode_overlay(raw[:cut])
+        queue.acknowledge(overlay)
+        self.assertEqual([e[1] for e in queue.events],[2])
+        other=HEADER.pack(b'MMOV',1,2,2,8,99,0,b'other_session')+bytes(16)
+        queue.acknowledge(decode_overlay(other))
+        self.assertEqual(len(queue.events),1,'An old compositor frame must not acknowledge a new input session')
+        old_session=queue.session
+        queue.reset()
+        self.assertNotEqual(queue.session,old_session)
+        self.assertEqual(queue.events,[])
+        self.assertEqual(queue.x,0)
+        with self.assertRaises(ValueError): decode_overlay(HEADER.pack(b'MMOV',1,99999,2,8,0,0,b'test'))
     def test_java_interop_and_damage(self):
         java_home = os.environ.get('JAVA_HOME')
         javac = str(Path(java_home)/'bin/javac') if java_home else shutil.which('javac')
@@ -74,7 +120,7 @@ class Tests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             d=Path(directory)
             (d/'lua.frame').write_text(self.wire.encode('lua_test',1,self.rows([['ACK',1],['LINK','session_1']])))
-            files=[ROOT/'fabric/src/main/java/dev/minemakers/bridge'/f for f in ('Wire.java','BlockDamage.java')]
+            files=[ROOT/'fabric/src/main/java/dev/minemakers/bridge'/f for f in ('Wire.java','BlockDamage.java','DesktopInput.java')]
             subprocess.run([javac,'--release','21','-d',str(d),*[str(p) for p in files],str(ROOT/'tests/ProtocolTest.java')],check=True)
             subprocess.run([java,'-cp',str(d),'ProtocolTest',str(d)],check=True)
             decoded=self.wire.decode((d/'java.frame').read_text())

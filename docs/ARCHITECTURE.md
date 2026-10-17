@@ -3,6 +3,9 @@
 SkyCraft's SKSE renderer, Havok extraction, damage hooks and shared-memory layout are
 specific to Skyrim. MineMakers uses a different, portable prototype: a Fabric mod
 and documented Trailmakers Lua, communicating through a shared local directory.
+Version 0.2 adds a Windows layered-window compositor and explicit desktop input
+forwarding, plus transparent export of the real vanilla hand/HUD/GUI. This is an
+out-of-process desktop overlay, not a native Trailmakers graphics plugin.
 Minecraft owns its world and vanilla rules. Trailmakers owns contraptions and host
 physics. The Java singleplayer server drives snapshots; client input is mirrored
 through actual vanilla key bindings. Opening a Minecraft screen releases bridged keys.
@@ -29,8 +32,9 @@ flowchart LR
 - Minecraft snapshots include up to 4,096 solid blocks in a 17×12×17 region and
   nearby projectile/TNT positions. Other block shapes/types are simplified cubes;
   liquids, vegetation, particles, lighting, full chunks and block entities are not rendered.
-- Original placeholder textures provide wood, stone, bedrock, TNT and ten crack
-  stages. They do not redistribute Minecraft art or export the selected player's skin.
+- Original placeholder world textures provide wood, stone, bedrock, TNT and ten
+  crack stages. Minecraft itself now renders the first-person hand and item/HUD/GUI
+  layer. The third-person avatar is still a placeholder rather than an exported skin.
 
 ## File framing
 
@@ -122,3 +126,70 @@ against the retained native player has not been tested.
 Generate the actual installed API documentation with `tm.GetDocs()` before changing
 runtime bindings. Community definitions and our fake API are evidence for signatures,
 not proof of behavior on a particular installed Trailmakers version.
+
+
+## 0.2 camera and desktop rendering
+
+`view.frame` uses the same MMT1 framing and Minecraft session token as scene output.
+Its single `VIEW x y z yaw pitch eyeHeight menuOpen` row is published by the client
+at tick rate, independently of the 5 Hz scene/block export. Lua creates a custom
+first-person camera, places it at the real eye height, and converts Minecraft look
+to a Unity direction vector. Disconnect removes only this owned camera. A slower
+scene snapshot cannot rewind an already-received view. The native body is rotated
+with the view and avatar cubes are hidden in first person.
+
+When Minecraft has focus, the legacy input bridge leaves its controls and view
+alone. Otherwise the Windows desktop input has priority over the Lua keyboard
+fallback. The fallback uses J/L and Up/Down for view rotation; it no longer reads
+an unrotated native third-person body transform as authoritative look input.
+
+`tools/desktop_overlay.py` uses documented Win32 layered-window, low-level keyboard/
+button hook, and raw mouse APIs. F8 explicitly arms it while Trailmakers is the
+foreground window; inputs are not logged or forwarded from other applications.
+Alt-Tab/Windows keys release capture. No DLL injection or game assemblies are used.
+Raw relative mouse motion supports a virtual GUI cursor even if Trailmakers locks
+the OS cursor. The helper requires Windows and windowed/borderless Trailmakers.
+
+It writes `desktop.frame` with its own UUID session and increasing sequence:
+
+| Row | Fields after tag |
+|---|---|
+| ACTIVE | 0/1 |
+| POINTER | cumulative mouse x y, normalized GUI cursor x y |
+| HELD | one GLFW key code per row |
+| EVENT | event ID, KEY, GLFW key, action 0/1/2, modifier bits |
+| EVENT | event ID, CHAR, Unicode BMP code point |
+| EVENT | event ID, BUTTON, button 0/1/2, action 0/1, modifiers, normalized cursor x y |
+| EVENT | event ID, SCROLL, vertical wheel steps |
+
+Events remain until acknowledged in rendered frames; each is handled at most once.
+Held-state snapshots reconcile dropped releases, and input expires after 750 ms
+without a new frame. Cumulative look totals prevent lost mouse deltas when snapshots
+are skipped. Screen key/click/drag/scroll callbacks are vanilla Minecraft handlers.
+An `InputUtil.isKeyPressed` hook exposes captured modifiers to vanilla shift-click,
+control shortcuts and other screen logic. Capture keeps `isPaused()` false so the
+singleplayer server does not freeze its scene stream while menus are open.
+
+While desktop capture is active, the game renderer clears color/depth immediately
+before vanilla first-person hand rendering. The real hand, item, hotbar, hearts,
+chat and current screen then render onto transparent color. Destination-color
+vignette and full-frame blur are suppressed because they otherwise make the whole
+export opaque. First-person perspective is selected during capture and the old
+perspective is restored on release. This path targets vanilla rendering; shader
+and renderer replacement mods are not validated.
+
+`overlay.bgra` is atomic binary output, at most 1280×720 and 15 FPS. The 100-byte
+little-endian header is `<4sIIIQQI64s`: `MMOV`, version 1, width, height, image
+sequence, acknowledged desktop event ID, flags (bit 0 = menu open), and zero-padded
+ASCII desktop session token. Bottom-up BGRA pixel rows follow. GL blending produces
+premultiplied color suitable for Win32 `UpdateLayeredWindow`.
+
+The helper rejects oversized/truncated/stale images and images for another desktop
+session. It scales the image to Trailmakers' client rectangle and draws a virtual
+cursor over vanilla menus. A frozen image cannot keep input captured indefinitely.
+No desktop/global screen capture is performed; only Minecraft's own framebuffer
+is exported by the mod.
+
+Actual Minecraft hand/HUD export, inventory opening, remote slot clicks, mouse look
+and pause-menu liveness were exercised under Xvfb/Mesa. The Win32 compositor and
+Trailmakers-side camera remain untested on this Linux cloud machine.
