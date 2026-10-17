@@ -1,0 +1,4 @@
+{
+  "required": true, "package": "dev.minemakers.mixin", "compatibilityLevel": "JAVA_21",
+  "mixins": [], "client": ["KeyBindingAccessor"], "injectors": {"defaultRequire": 1}
+}

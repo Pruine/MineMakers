@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1, "id": "minemakers", "version": "0.1.0",
+  "name": "MineMakers", "description": "Experimental Minecraft Java / Trailmakers bridge",
+  "environment": "*", "license": "MIT",
+  "entrypoints": {"main": ["dev.minemakers.MineMakers"], "client": ["dev.minemakers.client.MineMakersClient"]},
+  "mixins": ["minemakers.mixins.json"],
+  "depends": {"fabricloader": ">=0.16.10", "minecraft": "1.21.1", "java": ">=21", "fabric-api": "*"}
+}
