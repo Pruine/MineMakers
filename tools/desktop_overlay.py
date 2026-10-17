@@ -84,7 +84,7 @@ def run(directory, title):
         raise SystemExit('An overlay helper is already running for this folder. Close that helper window before starting another.')
     writer=FrameWriter(directory)
     state={'armed':False,'capture':False,'target':None,'rect':None,'frame':None,'fresh':-100.0,
-           'mtime':None,'raw_seq':None,'failed':False,'vkeys':set(),'bitmap':None,'old':None,'bits':None,'size':None,'write_warning':False}
+           'mtime':None,'raw_seq':None,'failed':False,'vkeys':set(),'bitmap':None,'old':None,'bits':None,'size':None,'write_warning':False,'last_draw':None}
     dc=user.GetDC(None); mem=gdi.CreateCompatibleDC(dc)
     if not dc or not mem: raise OSError('Cannot create overlay device context')
     def foreground():
@@ -162,9 +162,13 @@ def run(directory, title):
         # ACTIVE is sent while arming so Minecraft can generate the very first overlay.
         write(bool(state['armed'] and rect))
         if capture:
-            render(state['frame'],rect)
+            frame=state['frame']
+            draw_key=(frame.session,frame.sequence,rect,q.cursor_x if frame.menu else 0,q.cursor_y if frame.menu else 0)
+            if draw_key!=state['last_draw']:
+                render(frame,rect); state['last_draw']=draw_key
             user.SetCursorPos(rect[0]+rect[2]//2,rect[1]+rect[3]//2)
-        else: user.ShowWindow(hwnd,0)
+        else:
+            user.ShowWindow(hwnd,0); state['last_draw']=None
     VK={0x08:259,0x09:258,0x0D:257,0x1B:256,0x20:32,0x21:266,0x22:267,0x23:269,0x24:268,
         0x25:263,0x26:265,0x27:262,0x28:264,0x2D:260,0x2E:261,0xA0:340,0xA1:344,
         0xA2:341,0xA3:345,0xA4:342,0xA5:346,0x10:340,0x11:341,0x12:342,
@@ -258,7 +262,7 @@ def run(directory, title):
     if not user.RegisterRawInputDevices(c.byref(device),1,c.sizeof(RID)): raise OSError('Cannot register raw mouse input')
     kh=user.SetWindowsHookExW(13,keyboard_hook,instance,0); mh=user.SetWindowsHookExW(14,mouse_hook,instance,0)
     if not kh or not mh: raise OSError('Cannot install game input hooks')
-    user.SetTimer(hwnd,1,33,None)
+    user.SetTimer(hwnd,1,16,None)
     print('Focus Trailmakers and press F8. Press F8 again to release. Ctrl+C closes this helper.',flush=True)
     try:
         message=w.MSG()

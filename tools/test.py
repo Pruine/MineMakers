@@ -26,6 +26,24 @@ class Tests(unittest.TestCase):
         for bad in ['NaN', 'inf', '30000001']:
             with self.assertRaises(Exception): self.wire.number(bad)
         with self.assertRaises(Exception): self.wire.encode('test',1,self.rows([['BAD\nROW']]))
+    def test_view_smoothing(self):
+        module=self.lua.execute((ROOT/'mod/data_static/view_smoother.lua').read_text())
+        smooth=module.new(0.035,4)
+        def pose(x,yaw):
+            return self.lua.table_from(dict(pos=self.lua.table_from(dict(x=x,y=0,z=0)),yaw=yaw,pitch=0,eyeHeight=1.62))
+        self.assertIsNone(smooth.sample(smooth,0))
+        smooth.push(smooth,pose(0,359),1)
+        smooth.push(smooth,pose(2,1),1.1)
+        mid=smooth.sample(smooth,1.085)
+        self.assertAlmostEqual(mid.pos.x,1)
+        self.assertAlmostEqual(mid.yaw,360)
+        self.assertFalse(smooth.push(smooth,pose(1,90),0.9))
+        self.assertAlmostEqual(smooth.sample(smooth,3).pos.x,2) # stalled stream must not drift
+        smooth.push(smooth,pose(20,90),3) # teleport snaps, never flies through intervening walls
+        self.assertAlmostEqual(smooth.sample(smooth,3).pos.x,20)
+        smooth.reset(smooth)
+        self.assertIsNone(smooth.sample(smooth,4))
+
     def test_native_adapter(self):
         self.lua.globals().TEST_ROOT = str(ROOT)
         self.lua.execute((ROOT/'tests/fake_trailmakers.lua').read_text())
@@ -45,6 +63,7 @@ class Tests(unittest.TestCase):
         self.assertTrue(test.invincible)
         self.assertFalse(test.builder)
         self.assertTrue(test.camera)
+        self.assertLessEqual(test.updateInterval,1/60)
         self.assertAlmostEqual(test.cameraPosition.y,6.62)
         self.assertAlmostEqual(test.cameraDirection.z,1)
         self.assertFalse(any(v.visible for _,v in test.spawns.items() if v.trigger), 'First-person camera must not be inside a visible avatar head')
@@ -74,7 +93,9 @@ class Tests(unittest.TestCase):
         self.assertAlmostEqual(test.cameraDirection.x,-0.8660254037844386)
         self.assertAlmostEqual(test.cameraDirection.y,-0.5)
         test.files['view.frame']=self.wire.encode('wrong_session',99,self.rows([['VIEW',0,0,0,0,0,1.62,0]]))
+        before=test.cameraActivations
         tick(2.4)
+        self.assertGreater(test.cameraActivations,before)
         self.assertAlmostEqual(test.cameraPosition.y,8.54)
         snapshot(5,blocks=False)
         tick(2.7)

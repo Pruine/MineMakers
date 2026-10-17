@@ -53,7 +53,7 @@ public final class OverlayCapture {
     public static void capture() {
         Bridge bridge=MineMakers.bridge;
         long now=System.nanoTime();
-        if (!enabled() || bridge==null || now-lastCapture<66_666_667L) return;
+        if (!enabled() || bridge==null || now-lastCapture<33_333_333L) return;
         lastCapture=now;
         MinecraftClient mc=MinecraftClient.getInstance();
         int sw=mc.getFramebuffer().textureWidth,sh=mc.getFramebuffer().textureHeight;

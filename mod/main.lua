@@ -1,6 +1,8 @@
 -- MineMakers Trailmakers half. No external Lua packages, HTTP, or unsafe code execution.
 local W=tm.os.DoFile('wire')
 local C=tm.os.DoFile('config')
+local smoother=tm.os.DoFile('view_smoother').new(C.viewSmoothingDelay or 0.035,C.teleportSnapDistance or 4)
+tm.os.SetModTargetDeltaTime(C.updateInterval or 1/60)
 local anchor=nil
 local objects,entities,avatar={},{},{}
 local nativeTargets,activeTargets={},{}
@@ -24,6 +26,8 @@ local sceneRows={}
 local oldBuilder=nil
 local linked=false
 local warned=false
+local cameraWarning=false
+local puppetWarning=false
 local V=tm.vector3.Create
 local function point(x,y,z) return {x=x,y=y,z=z} end
 local function world(p) return V(anchor.x+p.x,anchor.y+p.y,anchor.z+p.z) end
@@ -48,23 +52,28 @@ local function cube(p,tex,scale,solid)
 end
 local function applyView(p)
     if not linked or not p then return end
-    local t=tm.players.GetPlayerTransform(C.playerId)
-    if not tm.players.IsPlayerInSeat(C.playerId) then
-        t.SetPosition(world(p.pos)); t.SetRotation(0,-p.yaw,0)
-    end
     if C.firstPerson~=false then
         local eye=world(point(p.pos.x,p.pos.y+(p.eyeHeight or C.eyeHeight or 1.62),p.pos.z))
         if not camera then
             tm.players.AddCamera(C.playerId,eye,V(0,0,0),1000)
             camera=true
-            tm.players.ActivateCamera(C.playerId,0)
         end
         local yaw=p.yaw*math.pi/180; local pitchRad=p.pitch*math.pi/180
         tm.players.SetCameraPosition(C.playerId,eye)
         tm.players.SetCameraRotation(C.playerId,V(-math.sin(yaw)*math.cos(pitchRad),-math.sin(pitchRad),math.cos(yaw)*math.cos(pitchRad)))
+        tm.players.ActivateCamera(C.playerId,0) -- retain ownership if native input selects another camera
     end
+    -- Native controller failures must not prevent first-person camera setup.
+    local ok,err=pcall(function()
+        if not tm.players.IsPlayerInSeat(C.playerId) then
+            local t=tm.players.GetPlayerTransform(C.playerId)
+            t.SetPosition(world(p.pos)); t.SetRotation(V(0,-p.yaw,0))
+        end
+    end)
+    if not ok and not puppetWarning then tm.os.Log('MineMakers native follow: '..tostring(err)); puppetWarning=true end
 end
 local function cleanup()
+    smoother:reset()
     if camera then
         tm.players.DeactivateCamera(C.playerId,0)
         tm.players.RemoveCamera(C.playerId)
@@ -127,7 +136,10 @@ local function commit(rows,newSession)
     tm.players.SetPlayerIsInvincible(C.playerId,p.creative)
     if not keys.j and not keys.l then lookYaw=p.yaw end
     if not keys.up and not keys.down then pitch=p.pitch end
-    applyView(p)
+    if lastViewSeq<0 then
+        smoother:push(p,tm.os.GetRealtimeSinceStartup())
+        applyView(p)
+    end
     local seen={}
     for _,b in ipairs(blocks) do
         local k=key(b.pos); seen[k]=true; local previous=objects[k]
@@ -217,7 +229,9 @@ local function terrain(rows)
     local p=player.pos; local radius=C.terrainRadius
     for x=-radius,radius do for z=-radius,radius do
         local gx=math.floor(p.x)+x; local gz=math.floor(p.z)+z
-        local origin=world(point(gx+0.5,p.y+3,gz+0.5))
+        -- Starting near the feet inside our native capsule avoids raycasting its head.
+        local nearSelf=math.abs(gx+0.5-p.x)<0.65 and math.abs(gz+0.5-p.z)<0.65
+        local origin=world(point(gx+0.5,p.y+(nearSelf and 0.05 or 3),gz+0.5))
         local hit=tm.physics.RaycastData(origin,V(0,-1,0),C.terrainDepth,true)
         if hit.DidHit() then
             local surface=relative(hit.GetHitPosition())
@@ -241,7 +255,7 @@ local function readView(now)
     if #r~=8 or r[1]~='VIEW' then return end
     local p={pos=pos(r[2],r[3],r[4]),yaw=W.number(r[5]),pitch=W.number(r[6]),eyeHeight=W.number(r[7])}
     if p.eyeHeight<0 or p.eyeHeight>3 then return end
-    applyView(p)
+    smoother:push(p,now)
     player.pos=p.pos; player.yaw=p.yaw; player.pitch=p.pitch; player.eyeHeight=p.eyeHeight
     if not keys.j and not keys.l then lookYaw=p.yaw end
     if not keys.up and not keys.down then pitch=p.pitch end
@@ -280,6 +294,17 @@ function update()
         lastViewRead=now
         local ok,err=pcall(readView,now)
         if not ok and not warned then tm.os.Log('MineMakers camera: '..tostring(err)); warned=true end
+    end
+    if linked then
+        local pose=smoother:sample(now)
+        if pose then
+            local ok,err=pcall(applyView,pose)
+            if not ok and not cameraWarning then
+                tm.os.Log('MineMakers first-person camera failed: '..tostring(err))
+                message('First-person camera failed; see mod log')
+                cameraWarning=true
+            elseif ok then cameraWarning=false end
+        end
     end
     if now-lastRead>=C.interval then
         lastRead=now

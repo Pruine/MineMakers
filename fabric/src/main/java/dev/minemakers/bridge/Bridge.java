@@ -13,7 +13,7 @@ public final class Bridge implements AutoCloseable {
                         boolean sneak,boolean attack,boolean use,float yaw,float pitch,int slot) {}
     public record HostFrame(Wire.Frame wire,long receivedNanos) {}
     private final Path directory;
-    private final ScheduledExecutorService worker=Executors.newSingleThreadScheduledExecutor(r -> {
+    private final ScheduledExecutorService worker=Executors.newScheduledThreadPool(2,r -> {
         Thread t=new Thread(r,"minemakers-file-bridge"); t.setDaemon(true); return t;
     });
     private final String session=UUID.randomUUID().toString();
@@ -26,9 +26,10 @@ public final class Bridge implements AutoCloseable {
     private long written=-1;
     public Bridge(Path directory) {
         this.directory=directory;
-        worker.scheduleWithFixedDelay(this::exchange,0,50,TimeUnit.MILLISECONDS);
+        worker.scheduleWithFixedDelay(this::exchangeFast,0,8,TimeUnit.MILLISECONDS);
+        worker.scheduleWithFixedDelay(this::exchangeScene,0,50,TimeUnit.MILLISECONDS);
     }
-    private void exchange() {
+    private void exchangeFast() {
         try {
             Wire.Frame f=Wire.read(directory.resolve("desktop.frame"));
             HostFrame old=desktop;
@@ -38,6 +39,8 @@ public final class Bridge implements AutoCloseable {
             Wire.Frame v=view;
             if (v!=null && v.sequence()>viewWritten) { Wire.write(directory.resolve("view.frame"),v); viewWritten=v.sequence(); }
         } catch (IOException ignored) { }
+    }
+    private void exchangeScene() {
         try {
             Wire.Frame frame=Wire.read(directory.resolve("trailmakers.frame"));
             HostFrame old=incoming;

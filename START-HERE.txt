@@ -1,3 +1,8 @@
+UPGRADING TO 0.2.3: Exit both games and close the old overlay helper.
+Replace the Minecraft MineMakers JAR, Trailmakers main.lua and data_static,
+and run the helper from THIS extracted ZIP. Keep only one MineMakers JAR.
+Keep firstPerson=true. See docs/UPGRADE-0.2.md for full steps.
+
 MineMakers 0.2.2 setup and Windows file-lock fix
 
 EXTRACT THE WHOLE ZIP before launching anything.

@@ -25,6 +25,7 @@ T.block.GetStructure=function() return {AddForce=function(x,y,z,kind) T.forceCal
 local structure={GetBlocks=function() return {T.block} end}
 tm={os={},physics={},players={},playerUI={},input={},vector3={Create=vector},enums={physicsMaterial={stone='Stone'},forceType={impulse='Impulse'}}}
 tm.os.DoFile=function(name) return assert(loadfile(TEST_ROOT..'/mod/data_static/'..name..'.lua'))() end
+tm.os.SetModTargetDeltaTime=function(dt) T.updateInterval=dt end
 tm.os.GetRealtimeSinceStartup=function() return T.time end
 tm.os.Log=function(s) T.lastLog=s end
 tm.os.ReadAllText_Dynamic=function(path) assert(T.files[path], 'not found'); return T.files[path] end
@@ -61,7 +62,7 @@ tm.playerUI.AddUILabel=function(id,key,value) T.labels[key]=value end
 tm.playerUI.SetUIValue=function(id,key,value) T.labels[key]=value end
 
 tm.players.AddCamera=function(id,p,r,priority) assert(id==0 and not T.camera); T.camera=true; T.cameraPosition=p end
-tm.players.ActivateCamera=function(id,fade) assert(T.camera); T.cameraActive=true end
+tm.players.ActivateCamera=function(id,fade) assert(T.camera); T.cameraActive=true; T.cameraActivations=(T.cameraActivations or 0)+1 end
 tm.players.SetCameraPosition=function(id,p) assert(T.camera); T.cameraPosition=p end
 tm.players.SetCameraRotation=function(id,d) assert(T.camera); T.cameraDirection=d end
 tm.players.DeactivateCamera=function(id,fade) T.cameraActive=false end

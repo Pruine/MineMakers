@@ -12,13 +12,15 @@ framebuffer or forward a complete desktop mouse/keyboard stream on its own.
 
 ## Replace the old installation
 
-0.2.2 keeps the setup corrections and retries Windows frame replacement when a
-reader briefly locks the file. Only one helper instance per folder is allowed. If 0.2 is
-already installed, its JAR and Lua can be used with these updated helper tools.
+0.2.3 uses Minecraft's rendered camera pose, interpolates Trailmakers camera
+updates, reasserts first-person camera ownership, and increases input polling.
+It retains the Windows file-lock recovery from 0.2.2. **Replace all three parts:
+the Minecraft JAR, Trailmakers Lua files, and overlay helper.** Older JARs do not
+provide the new render-rate pose stream.
 
-1. Download `MineMakers-experimental-0.2.2.zip` from the repository's `downloads/`
+1. Download `MineMakers-experimental-0.2.3.zip` from the repository's `downloads/`
    directory. **You do not need to rebuild it.**
-2. If replacing the JAR, unlink the old bridge, exit both games, and remove the older
+2. Unlink the old bridge, exit both games, and remove the older
    MineMakers JAR from Minecraft's `mods` folder; keep only one MineMakers version. Copy the new JAR
    from the ZIP's `Minecraft/mods/` folder. Keep the matching Fabric API installed.
 3. Replace the Trailmakers mod's `main.lua` and `data_static` with the new
@@ -70,7 +72,7 @@ accurate host geometry or multiplayer.
   level. The helper does not need administrator privileges. Raw relative mouse
   input is supported; absolute pointing/tablet input is not implemented.
 - **UI stretched:** use the same aspect ratio for both windows. The initial export
-  is capped at 1280×720 and 15 FPS; this is a compatibility prototype.
+  is capped at 1280×720 and 30 FPS; this is a compatibility prototype.
 
 Compilation, framing, acknowledgments and camera contracts are tested in the cloud.
 The actual Windows compositor and Trailmakers camera/input behavior remain unverified
@@ -84,7 +86,7 @@ The helper now keeps the previous complete frame and retries on the next timer
 update when Windows denies replacement of an open file. It does not stop the
 overlay, rewrite the destination in place, or discard pending input. Each helper
 uses its own temporary filename; a named mutex prevents two helpers competing for
-the same frame folder. Existing Minecraft 0.2/0.2.1 JARs and Lua remain compatible.
+the same frame folder. For the camera/movement improvements, install the complete 0.2.3 update.
 
 Close the previous helper window before starting the updated one. If denial lasts
 more than two seconds, the helper prints a separate persistent-lock/permissions

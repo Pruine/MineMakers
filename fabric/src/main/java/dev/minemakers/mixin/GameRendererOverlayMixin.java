@@ -9,6 +9,8 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 @Mixin(GameRenderer.class)
 public abstract class GameRendererOverlayMixin {
+    @Inject(method="render",at=@At("HEAD"))
+    private void minemakers$renderInput(CallbackInfo ci) { dev.minemakers.client.MineMakersClient.renderInput(); }
     @Inject(method="renderHand",at=@At("HEAD"))
     private void minemakers$transparentWorld(CallbackInfo ci) { OverlayCapture.clearWorld(); }
     @Inject(method="render",at=@At("TAIL"))

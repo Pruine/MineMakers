@@ -14,8 +14,14 @@ import java.util.Map;
 public final class MineMakersClient implements ClientModInitializer {
     private final Map<KeyBinding,Boolean> held=new HashMap<>();
     private Boolean oldPause;
-    private long viewSequence;
-    @Override public void onInitializeClient() { ClientTickEvents.START_CLIENT_TICK.register(this::tick); }
+
+    @Override public void onInitializeClient() { ClientTickEvents.START_CLIENT_TICK.register(this::tick);
+        net.fabricmc.fabric.api.client.rendering.v1.WorldRenderEvents.START.register(context -> ViewStream.publish(context.camera())); }
+    public static void renderInput() {
+        MinecraftClient mc=MinecraftClient.getInstance();
+        DesktopController.tick(mc,MineMakers.bridge);
+        OverlayCapture.tick(mc);
+    }
     private void key(KeyBinding key,boolean down) {
         boolean previous=held.getOrDefault(key,false);
         key.setPressed(down);
@@ -27,10 +33,6 @@ public final class MineMakersClient implements ClientModInitializer {
         if (bridge!=null) {
             if (oldPause==null) oldPause=mc.options.pauseOnLostFocus;
             mc.options.pauseOnLostFocus=false;
-        }
-        if (bridge!=null && mc.player!=null) {
-            var at=mc.player.getPos().subtract(MineMakers.origin());
-            bridge.publishView(++viewSequence,java.util.List.<String[]>of(Bridge.row("VIEW",at.x,at.y,at.z,mc.player.getYaw(),mc.player.getPitch(),mc.player.getEyeY()-mc.player.getY(),mc.currentScreen!=null ? 1 : 0)));
         }
         boolean desktop=DesktopController.tick(mc,bridge);
         OverlayCapture.tick(mc);

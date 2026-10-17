@@ -14,7 +14,7 @@ There is no native Trailmakers plugin in this release.
 
 ## Download
 
-[Download the experimental prototype ZIP](https://github.com/Pruine/MineMakers/raw/refs/heads/main/downloads/MineMakers-experimental-0.2.2.zip).
+[Download the experimental prototype ZIP](https://github.com/Pruine/MineMakers/raw/refs/heads/main/downloads/MineMakers-experimental-0.2.3.zip).
 
 Extract the whole ZIP and open **`START-HERE.txt`**. Double-click
 **`Start-MineMakers-Overlay.cmd`** to run the UI helper. Paste the existing game
@@ -85,7 +85,7 @@ python3 tools/package.py
 ```
 
 Windows: use `gradlew.bat` and `.tools\test-venv\Scripts\python.exe` as appropriate.
-The remapped mod is `fabric/build/libs/minemakers-fabric-0.2.2.jar`. The package tool
+The remapped mod is `fabric/build/libs/minemakers-fabric-0.2.3.jar`. The package tool
 requires that JAR; `--source-only` explicitly creates a developer source bundle.
 Do not mistake the `-sources.jar` for an installable mod.
 
