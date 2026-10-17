@@ -11,7 +11,7 @@ from pathlib import Path
 import struct
 import sys
 import time
-from desktop_protocol import InputQueue, decode_overlay
+from desktop_protocol import InputQueue, decode_overlay, resolve_directory
 
 
 def run(directory, title):
@@ -70,7 +70,7 @@ def run(directory, title):
     api(gdi,'SelectObject',w.HANDLE,[w.HDC,w.HANDLE]); api(gdi,'DeleteObject',w.BOOL,[w.HANDLE])
     api(gdi,'StretchDIBits',c.c_int,[w.HDC,c.c_int,c.c_int,c.c_int,c.c_int,c.c_int,c.c_int,c.c_int,c.c_int,c.c_void_p,c.POINTER(BI),w.UINT,w.DWORD])
     api(gdi,'SetStretchBltMode',c.c_int,[w.HDC,c.c_int])
-    q=InputQueue(); directory=directory.resolve(); directory.mkdir(parents=True,exist_ok=True)
+    q=InputQueue(); directory=resolve_directory(directory)
     state={'armed':False,'capture':False,'target':None,'rect':None,'frame':None,'fresh':-100.0,
            'mtime':None,'raw_seq':None,'failed':False,'vkeys':set(),'bitmap':None,'old':None,'bits':None,'size':None}
     dc=user.GetDC(None); mem=gdi.CreateCompatibleDC(dc)
@@ -257,8 +257,17 @@ def run(directory, title):
 
 if __name__=='__main__':
     p=argparse.ArgumentParser(description=__doc__)
-    p.add_argument('directory',type=Path,help='Same Trailmakers data_dynamic directory passed to /minemakers link')
+    p.add_argument('directory',nargs='?',type=Path,help='Existing folder containing trailmakers.frame, normally data_dynamic_willnotbeuploadedtoworkshop')
     p.add_argument('--title',default='Trailmakers',help='Foreground window title must contain this text (default: Trailmakers)')
     args=p.parse_args()
     if not args.title.strip(): p.error('A specific game window title is required')
-    run(args.directory,args.title)
+    if args.directory is None:
+        print('The helper lives in tools. Frame files stay in the Trailmakers mod folder.')
+        print('Paste the full path to the EXISTING folder containing trailmakers.frame')
+        print('(normally named data_dynamic_willnotbeuploadedtoworkshop).')
+        try: args.directory=Path(input('Frame folder: ').strip().strip('"'))
+        except (EOFError,KeyboardInterrupt): raise SystemExit('No folder selected.')
+    try: directory=resolve_directory(args.directory)
+    except ValueError as e: p.error(str(e))
+    print('Using Trailmakers frame folder: '+str(directory))
+    run(directory,args.title)

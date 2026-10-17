@@ -12,22 +12,30 @@ framebuffer or forward a complete desktop mouse/keyboard stream on its own.
 
 ## Replace the old installation
 
-1. Download `MineMakers-experimental-0.2.0.zip` from the repository's `downloads/`
+0.2.1 corrects setup instructions and adds a launcher/path validation. If 0.2 is
+already installed, its JAR and Lua can be used with these updated helper tools.
+
+1. Download `MineMakers-experimental-0.2.1.zip` from the repository's `downloads/`
    directory. **You do not need to rebuild it.**
-2. Unlink the old bridge, exit both games, and remove the old
-   `minemakers-fabric-0.1.0.jar` from Minecraft's `mods` folder. Copy the new JAR
+2. If replacing the JAR, unlink the old bridge, exit both games, and remove the older
+   MineMakers JAR from Minecraft's `mods` folder; keep only one MineMakers version. Copy the new JAR
    from the ZIP's `Minecraft/mods/` folder. Keep the matching Fabric API installed.
 3. Replace the Trailmakers mod's `main.lua` and `data_static` with the new
    `Trailmakers/` files. If you changed `playerId` or other settings, carry those
    values into the new `config.lua`; keep `firstPerson=true`. Do not replace your
-   Minecraft save. Old files in `data_dynamic` are ignored until a fresh handshake.
-4. Start both games and run the same `/minemakers link ".../data_dynamic"` command
+   Minecraft save. Old files in `data_dynamic_willnotbeuploadedtoworkshop` are ignored until a fresh handshake.
+4. Start both games and run the same `/minemakers link ".../data_dynamic_willnotbeuploadedtoworkshop"` command
    in Minecraft. The Trailmakers view should now be first person and should turn
    with the Minecraft view when Minecraft has focus.
-5. Install **64-bit Python 3.10+** on Windows. Open PowerShell in the extracted ZIP:
+5. Install **64-bit Python 3.10+** on Windows. Extract the **entire** ZIP.
+   Double-click `Start-MineMakers-Overlay.cmd` in its root, then paste the full path
+   to the existing `data_dynamic_willnotbeuploadedtoworkshop` folder containing
+   `trailmakers.frame`. The helper scripts live under the ZIP's `tools/` directory;
+   they are not generated inside the frame folder. Alternatively, open PowerShell
+   at the extracted ZIP root:
 
    ```powershell
-   py -3 .\tools\desktop_overlay.py "C:/the/same/Trailmakers/mod/data_dynamic"
+   py -3 .\tools\desktop_overlay.py "C:/the/same/Trailmakers/mod/data_dynamic_willnotbeuploadedtoworkshop"
    ```
 
 6. Set Trailmakers to **windowed or borderless**, keep Minecraft running behind it
@@ -49,7 +57,7 @@ accurate host geometry or multiplayer.
 - **Still third person:** replace the Trailmakers Lua files, not just the JAR;
   confirm `firstPerson=true`. Check the game's mod log for a camera API error.
 - **No UI:** the helper is required. Confirm both games use the same real
-  `data_dynamic` path and that `desktop.frame`, `view.frame` and `overlay.bgra`
+  `data_dynamic_willnotbeuploadedtoworkshop` path and that `desktop.frame`, `view.frame` and `overlay.bgra`
   update there. Focus Trailmakers and press F8; use borderless/windowed mode.
 - **Helper says waiting:** keep Minecraft running and unfocused behind Trailmakers,
   close its loading screen, check the new JAR is loaded, and check Minecraft's

@@ -9,13 +9,15 @@ Minecraft **1.21.1**, and Fabric API **0.115.1+1.21.1**. No game or launcher is 
 The Trailmakers version must be checked against its generated `tm.GetDocs()` API;
 no installed copy was available during development.
 
-1. Build the JAR using `fabric/gradlew build` (Windows: `gradlew.bat build`). Copy
-   `fabric/build/libs/minemakers-fabric-0.2.0.jar` and the matching Fabric API JAR to
+1. Use the prebuilt JAR in the ZIP's `Minecraft/mods/` folder. If building from source,
+   build the JAR using `fabric/gradlew build` (Windows: `gradlew.bat build`). Copy
+   `fabric/build/libs/minemakers-fabric-0.2.1.jar` and the matching Fabric API JAR to
    the Minecraft instance's `mods` directory.
 2. In Trailmakers, create a local mod using its mod tools, then copy `mod/main.lua`
    and the entire `mod/data_static` directory into that generated mod directory.
-   Preserve the game's generated mod metadata. Create its `data_dynamic` directory
-   if needed. The release ZIP puts these files under `Trailmakers/`.
+   Preserve the game's generated mod metadata. Use the existing
+   `data_dynamic_willnotbeuploadedtoworkshop` directory created by Trailmakers.
+   Select the folder that already contains `trailmakers.frame`. The release ZIP puts these files under `Trailmakers/`.
 3. Start a **singleplayer Trailmakers session**, enable the mod, and stand in an
    open area outside a contraption. The default paired player ID is 0, configured
    in `data_static/config.lua`. Stay outside a seat while driving Minecraft.
@@ -24,7 +26,7 @@ no installed copy was available during development.
    time to link before falling. Keep this world separate from regular saves.
    The bridge temporarily writes barrier blocks to represent host terrain; normal
    unlink removes barriers it owns, but a crash can leave them in this dedicated world.
-5. Run `/minemakers link "C:/absolute/path/to/the/mod/data_dynamic"` in Minecraft.
+5. Run `/minemakers link "C:/absolute/path/to/the/mod/data_dynamic_willnotbeuploadedtoworkshop"` in Minecraft.
    The path must be the **same real local directory** Trailmakers reads/writes.
    Forward slashes avoid Brigadier's backslash escaping. Both games must run on the
    same PC with access to this directory. No network share or untrusted writer.
@@ -33,11 +35,14 @@ no installed copy was available during development.
    slots in Minecraft. `/gamemode creative` and `/gamemode survival` use vanilla
    commands. `/minemakers status` reports whether fresh host frames are arriving.
 7. Install 64-bit [Python 3.10 or newer](https://www.python.org/downloads/windows/) if
-   necessary. No Python packages are needed for the runtime helper. In PowerShell
-   in the extracted ZIP, run:
+   necessary. Extract the **whole ZIP**, then double-click
+   **`Start-MineMakers-Overlay.cmd`** at its root and paste the existing frame-folder
+   path when prompted. The `.py` files are in the ZIP's `tools/` folder, not in the
+   game's dynamic data directory. No Python packages are needed. Alternatively,
+   in PowerShell in the extracted ZIP, run:
 
    ```powershell
-   py -3 .\tools\desktop_overlay.py "C:/absolute/path/to/the/mod/data_dynamic"
+   py -3 .\tools\desktop_overlay.py "C:/absolute/path/to/the/mod/data_dynamic_willnotbeuploadedtoworkshop"
    ```
 
    Use the same directory as `/minemakers link`. Keep Minecraft open and running

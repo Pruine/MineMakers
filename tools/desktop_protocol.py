@@ -2,6 +2,7 @@
 from dataclasses import dataclass
 import struct
 import uuid
+from pathlib import Path
 
 HEADER = struct.Struct('<4sIIIQQI64s')
 
@@ -60,3 +61,19 @@ class InputQueue:
         rows += [['HELD', k] for k in sorted(self.held)]
         rows += self.events
         return encode_frame(self.session, self.sequence, rows)
+
+
+def resolve_directory(path):
+    """Select the directory Trailmakers actually writes; never create an empty lookalike."""
+    root = Path(path).expanduser().resolve()
+    if not root.is_dir():
+        raise ValueError('Choose the existing Trailmakers folder containing trailmakers.frame. The helper will not create a new folder.')
+    if (root / 'trailmakers.frame').is_file():
+        return root
+    matches = [root / name for name in ('data_dynamic_willnotbeuploadedtoworkshop', 'data_dynamic')
+               if (root / name / 'trailmakers.frame').is_file()]
+    if len(matches) == 1:
+        return matches[0]
+    if len(matches) > 1:
+        raise ValueError('Both dynamic folders contain frames. Choose the exact folder used by the running Trailmakers mod.')
+    raise ValueError('No trailmakers.frame found. Start the Trailmakers mod, then select its existing data_dynamic_willnotbeuploadedtoworkshop folder containing the frame files.')

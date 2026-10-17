@@ -7,7 +7,7 @@ import subprocess
 import tempfile
 import unittest
 import struct
-from desktop_protocol import HEADER, InputQueue, decode_overlay
+from desktop_protocol import HEADER, InputQueue, decode_overlay, resolve_directory
 from lupa.lua52 import LuaRuntime
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -86,6 +86,21 @@ class Tests(unittest.TestCase):
         self.assertTrue(test.visible)
         self.assertFalse(test.invincible)
         self.assertFalse(any(v.alive for _,v in test.spawns.items()))
+    def test_dynamic_folder_selection(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root=Path(temp)
+            dynamic=root/'data_dynamic_willnotbeuploadedtoworkshop'
+            dynamic.mkdir()
+            (dynamic/'trailmakers.frame').write_text('frame')
+            self.assertEqual(resolve_directory(root),dynamic)
+            self.assertEqual(resolve_directory(dynamic),dynamic)
+            wrong=root/'data_dynamic'
+            with self.assertRaises(ValueError): resolve_directory(wrong)
+            self.assertFalse(wrong.exists(),'A mistyped path must not silently create an empty bridge folder')
+            wrong.mkdir()
+            with self.assertRaises(ValueError): resolve_directory(wrong)
+            (wrong/'trailmakers.frame').write_text('frame')
+            with self.assertRaises(ValueError): resolve_directory(root)
     def test_overlay_framing_and_input_ack(self):
         queue=InputQueue()
         queue.event('KEY',69,1,0)

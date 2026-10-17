@@ -14,7 +14,13 @@ There is no native Trailmakers plugin in this release.
 
 ## Download
 
-[Download the experimental prototype ZIP](https://github.com/Pruine/MineMakers/raw/refs/heads/main/downloads/MineMakers-experimental-0.2.0.zip).
+[Download the experimental prototype ZIP](https://github.com/Pruine/MineMakers/raw/refs/heads/main/downloads/MineMakers-experimental-0.2.1.zip).
+
+Extract the whole ZIP and open **`START-HERE.txt`**. Double-click
+**`Start-MineMakers-Overlay.cmd`** to run the UI helper. Paste the existing game
+folder containing `trailmakers.frame`, normally
+`data_dynamic_willnotbeuploadedtoworkshop`. The helper itself is under the ZIP's
+`tools/` folder.
 
 The ZIP includes the compiled Fabric JAR, Trailmakers Lua files, source, and setup
 instructions. The limitations above still apply; this is not a finished crossover.
@@ -79,7 +85,7 @@ python3 tools/package.py
 ```
 
 Windows: use `gradlew.bat` and `.tools\test-venv\Scripts\python.exe` as appropriate.
-The remapped mod is `fabric/build/libs/minemakers-fabric-0.2.0.jar`. The package tool
+The remapped mod is `fabric/build/libs/minemakers-fabric-0.2.1.jar`. The package tool
 requires that JAR; `--source-only` explicitly creates a developer source bundle.
 Do not mistake the `-sources.jar` for an installable mod.
 
@@ -88,7 +94,7 @@ physics, rendering, MoonSharp behavior or weapon behavior. The Gradle build has 
 JUnit tests; the separately invoked test harness is the test evidence.
 
 Development needs outbound access to Fabric/Minecraft repositories and Maven/Gradle.
-Runtime uses only two local files in the Trailmakers mod's `data_dynamic` directory;
+Runtime uses only two local files in the Trailmakers mod's `data_dynamic_willnotbeuploadedtoworkshop` directory;
 there is no bridge TCP listener and no secret or token requirement.
 
 In this managed Linux workspace, `python3 tools/cloud_setup.py` additionally prepares
