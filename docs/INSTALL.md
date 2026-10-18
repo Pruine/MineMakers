@@ -1,6 +1,6 @@
 # Experimental local setup
 
-**Upgrading? Replace all parts using [UPGRADE-0.3.md](UPGRADE-0.3.md).**
+**Upgrading? Replace all parts using [UPGRADE-0.4.md](UPGRADE-0.4.md).**
 The prebuilt ZIP already includes the Fabric JAR; building is optional.
 
 Use the Steam Windows version of Trailmakers with its official Lua mod loader,
@@ -11,7 +11,7 @@ no installed copy was available during development.
 
 1. Use the prebuilt JAR in the ZIP's `Minecraft/mods/` folder. If building from source,
    build the JAR using `fabric/gradlew build` (Windows: `gradlew.bat build`). Copy
-   `fabric/build/libs/minemakers-fabric-0.3.1.jar` and the matching Fabric API JAR to
+   `fabric/build/libs/minemakers-fabric-0.4.0.jar` and the matching Fabric API JAR to
    the Minecraft instance's `mods` directory.
 2. In Trailmakers, create a local mod using its mod tools, then copy `mod/main.lua`
    and the entire `mod/data_static` directory into that generated mod directory.
@@ -51,7 +51,7 @@ no installed copy was available during development.
    two windows' aspect ratios avoids stretching the Minecraft UI.
 8. Close Minecraft's menus, return focus to Trailmakers, and press **F8**. The helper
    arms capture, waits for fresh rendered pixels, and displays the actual Minecraft
-   hand/HUD/GUI over the first-person Trailmakers camera. F8 releases controls again.
+   Minecraft blocks, outlines, projectiles and hand/HUD/GUI over the first-person Trailmakers camera. F8 releases controls again.
    This is experimental Windows code, not yet validated on an installed game. Minecraft's
    `pauseOnLostFocus` option is temporarily disabled while linked and restored
    on `/minemakers unlink` or world exit. Keep both games running; there is no automatic launcher.

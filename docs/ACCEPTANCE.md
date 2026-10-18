@@ -82,3 +82,33 @@ ownership across pending-image replacement/resize, and helper timer requests are
 paired. The prior actual Minecraft runtime checks were performed against 0.3.0;
 0.3.1 has been built and regression-tested, without a new native Windows/Trailmakers
 runtime test.
+
+0.4 validation adds a concurrent Java-producer/Python-consumer shared-mapping
+check at 1280×720: every consumed image has one complete pixel pattern, pending
+frames may be skipped, and an unchanged mapping yields no duplicate image.
+The suite now runs 18 Python/Lua tests plus 129 Java protocol/damage assertions.
+Native adapter tests verify hidden solid block colliders, no projectile visual
+cubes, matching-session projectile surface queries and deduplicated impact events.
+They also hold the Minecraft control baseline fixed while fresh helper W/mouse
+input moves/turns the native camera, then advance the baseline without applying
+mouse deltas twice.
+
+An actual Minecraft client with the new world render pass produced transparent
+background, textured placed planks with the vanilla black selection outline,
+vanilla arrow/snowball/TNT models and the held item/HUD. A saved legacy slime hit
+proxy exposed an outer-layer render leak; render suppression and stale-proxy
+cleanup address it. Frame timing samples showed 105.8 render / 59.9 captured /
+59.9 mapped-write FPS under software Mesa, with no capture error. These rates are
+not a Windows compositor measurement. A real vanilla arrow landed at MC y=127.01
+on the simulated native ground plane at y=127 and remained `inGround:1b`.
+
+A second real-client check used a simulated native plane at MC y=127.3 while the
+sampled Minecraft barrier grid remained integer-aligned. A new arrow anchored at
+127.31 with `inGround:1b`; a new TNT entity remained at 127.31. A real owned ender
+pearl thrown at yaw 90 teleported the Minecraft proxy from (0.5,127.315,0.5) to
+approximately (-15.35,127.303,0.608), and the simulated host camera followed at
+reflected native X=15.35. E then opened the actual creative inventory through the
+helper protocol. Capture/mapping-write FPS stayed matched (58.9/58.9 in an inventory
+sample). These exercise Minecraft and the simulated native API, not installed
+Trailmakers physics or the Windows compositor. Producer-restart checks also ensure
+mapping epochs advance rather than reusing an in-flight image slot's old epoch.

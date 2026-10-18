@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Windows desktop compositor for real Minecraft UI/hand pixels over Trailmakers.
+"""Windows desktop compositor for real Minecraft world/UI/hand pixels over Trailmakers.
 
 No external Python packages. Capture is explicitly toggled with F8, only while
 Trailmakers is the foreground window. No keyboard input is logged. Alt-Tab,
@@ -12,7 +12,7 @@ from pathlib import Path
 import struct
 import sys
 import time
-from desktop_protocol import InputQueue, decode_overlay, resolve_directory, FrameWriter, TimerResolution
+from desktop_protocol import InputQueue, decode_overlay, resolve_directory, FrameWriter, TimerResolution, OverlayMapping
 
 
 def run(directory, title):
@@ -87,7 +87,8 @@ def run(directory, title):
         raise SystemExit('An overlay helper is already running for this folder. Close that helper window before starting another.')
     writer=FrameWriter(directory)
     state={'armed':False,'capture':False,'target':None,'rect':None,'frame':None,'fresh':-100.0,
-           'mtime':None,'raw_seq':None,'failed':False,'vkeys':set(),'bitmap':None,'old':None,'bits':None,'size':None,'write_warning':False,'last_draw':None}
+           'mtime':None,'raw_seq':None,'failed':False,'vkeys':set(),'bitmap':None,'old':None,'bits':None,'size':None,'write_warning':False,'last_draw':None,'mapping':None}
+    statistics=dict(since=time.monotonic(),polls=0,reads=0,presents=0,inputs=0,read_time=0.0,draw_time=0.0)
     dc=user.GetDC(None); mem=gdi.CreateCompatibleDC(dc)
     if not dc or not mem: raise OSError('Cannot create overlay device context')
     def foreground():
@@ -142,6 +143,7 @@ def run(directory, title):
             raise OSError('UpdateLayeredWindow failed; use windowed/borderless Trailmakers')
         user.ShowWindow(hwnd,4) # SW_SHOWNOACTIVATE
     def pulse():
+        statistics['polls']+=1
         target=foreground(); state['target']=target
         resolution.set(bool(state['armed'] and target))
         rect=None
@@ -150,30 +152,49 @@ def run(directory, title):
             if user.GetClientRect(target,c.byref(r)) and user.ClientToScreen(target,c.byref(origin)):
                 if 1<=r.right<=7680 and 1<=r.bottom<=4320: rect=(origin.x,origin.y,r.right,r.bottom)
         state['rect']=rect
+        read_started=time.monotonic()
         try:
-            path=directory/'overlay.bgra'; st=path.stat()
-            if st.st_size>4*1280*720+100: raise ValueError('Oversized overlay')
-            if st.st_mtime_ns!=state['mtime']:
-                frame=decode_overlay(path.read_bytes())
-                state['mtime']=st.st_mtime_ns
-                if frame.session==q.session and (frame.session,frame.sequence)!=state['raw_seq']:
-                    state['frame']=frame; state['raw_seq']=(frame.session,frame.sequence); state['fresh']=time.monotonic(); q.acknowledge(frame)
+            if state['mapping'] is None and (directory/'overlay.shared').is_file():
+                state['mapping']=OverlayMapping(directory/'overlay.shared')
+            frame=None
+            if state['mapping'] is not None:
+                frame=state['mapping'].read()
+            else: # compatibility with older JARs, while waiting for the new mapping
+                path=directory/'overlay.bgra'; st=path.stat()
+                if st.st_size>4*1280*720+100: raise ValueError('Oversized overlay')
+                if st.st_mtime_ns!=state['mtime']:
+                    frame=decode_overlay(path.read_bytes()); state['mtime']=st.st_mtime_ns
+            if frame is not None and frame.session==q.session and (frame.session,frame.sequence)!=state['raw_seq']:
+                statistics['reads']+=1
+                state['frame']=frame; state['raw_seq']=(frame.session,frame.sequence); state['fresh']=time.monotonic(); q.acknowledge(frame)
         except (OSError,ValueError,UnicodeError): pass
+        statistics['read_time']+=time.monotonic()-read_started
         fresh=time.monotonic()-state['fresh']<1.5
         capture=bool(state['armed'] and rect and fresh)
         if not capture and state['capture']:
             release(); state['armed']=False
         state['capture']=capture
         # ACTIVE is sent while arming so Minecraft can generate the very first overlay.
-        write(bool(state['armed'] and rect))
+        if write(bool(state['armed'] and rect)): statistics['inputs']+=1
         if capture:
             frame=state['frame']
             draw_key=(frame.session,frame.sequence,rect,q.cursor_x if frame.menu else 0,q.cursor_y if frame.menu else 0)
             if draw_key!=state['last_draw']:
+                draw_started=time.monotonic()
                 render(frame,rect); state['last_draw']=draw_key
+                statistics['presents']+=1; statistics['draw_time']+=time.monotonic()-draw_started
             user.SetCursorPos(rect[0]+rect[2]//2,rect[1]+rect[3]//2)
         else:
             user.ShowWindow(hwnd,0); state['last_draw']=None
+        now=time.monotonic(); elapsed=now-statistics['since']
+        if elapsed>=1:
+            info=('MineMakers 0.4.0 | capture: '+str(capture)+' | transport: '+('shared mapping' if state['mapping'] else 'legacy file')+'\n'
+                +f"Read: {statistics['reads']/elapsed:.1f} FPS | presented: {statistics['presents']/elapsed:.1f} FPS | input: {statistics['inputs']/elapsed:.1f} FPS\n"
+                +f"Average read/poll: {1000*statistics['read_time']/max(1,statistics['polls']):.2f} ms | compose: {1000*statistics['draw_time']/max(1,statistics['presents']):.2f} ms\n")
+            try:
+                temp=directory/'minemakers-overlay-status.txt.tmp'; temp.write_text(info,encoding='utf-8'); os.replace(temp,directory/'minemakers-overlay-status.txt')
+            except OSError: pass
+            statistics.update(since=now,polls=0,reads=0,presents=0,inputs=0,read_time=0.0,draw_time=0.0)
     VK={0x08:259,0x09:258,0x0D:257,0x1B:256,0x20:32,0x21:266,0x22:267,0x23:269,0x24:268,
         0x25:263,0x26:265,0x27:262,0x28:264,0x2D:260,0x2E:261,0xA0:340,0xA1:344,
         0xA2:341,0xA3:345,0xA4:342,0xA5:346,0x10:340,0x11:341,0x12:342,
@@ -277,6 +298,7 @@ def run(directory, title):
         release()
         try: write(False)
         except OSError: pass
+        if state['mapping'] is not None: state['mapping'].close()
         writer.close(); kernel.CloseHandle(mutex)
         user.UnhookWindowsHookEx(kh); user.UnhookWindowsHookEx(mh); user.KillTimer(hwnd,1)
         if state['bitmap']: gdi.SelectObject(mem,state['old']); gdi.DeleteObject(state['bitmap'])

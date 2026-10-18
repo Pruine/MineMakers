@@ -58,7 +58,7 @@ tm.physics.SpawnCustomObjectRigidbody=function(p,mesh,texture,kinematic,mass,mat
 end
 tm.physics.RaycastData=function(origin,direction,distance,ignore)
     local distance=T.ray(origin,direction,distance)
-    return {DidHit=function() return distance~=nil end,GetHitDistance=function() return distance end,
+    return {DidHit=function() return distance~=nil end,GetHitDistance=function() return distance end,GetHitNormal=function() return vector(0,1,0) end,
         GetHitPosition=function() return vector(origin.x+direction.x*distance,origin.y+direction.y*distance,origin.z+direction.z*distance) end}
 end
 tm.players.GetPlayerGameObject=function(id) assert(id==0); return body end

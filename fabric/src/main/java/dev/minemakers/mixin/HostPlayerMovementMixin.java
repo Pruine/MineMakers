@@ -15,7 +15,9 @@ public abstract class HostPlayerMovementMixin {
     @Inject(method="move",at=@At("HEAD"),cancellable=true)
     private void minemakers$hostMotion(MovementType type,Vec3d movement,CallbackInfo ci) {
         Entity self=(Entity)(Object)this;
-        if (MineMakers.isHostPlayer(self)) {
+        if (self instanceof net.minecraft.entity.TntEntity && dev.minemakers.bridge.HostProjectiles.nativeCollision(self)) {
+            self.setOnGround(false); self.setPosition(self.getPos().add(movement)); ci.cancel();
+        } else if (MineMakers.isHostPlayer(self)) {
             self.setVelocity(Vec3d.ZERO);
             self.fallDistance=0;
             ci.cancel();

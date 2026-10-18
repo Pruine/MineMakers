@@ -6,16 +6,17 @@ and owns inventory, combat rules, armor, blocks, TNT, ender pearls and game mode
 Trailmakers owns the linked player’s movement, collisions and first-person camera.
 
 **This is a compiled development prototype, not a finished playable crossover.**
-The Fabric JAR builds and the protocol/adapter tests pass. Version 0.3 replaces
-the Minecraft-position loop with local Trailmakers raycast movement. It includes a
-first-person camera and a Windows desktop compositor for real vanilla hand/HUD/GUI
-pixels. The two games and Windows compositor have not been tested together here. Native incoming weapon damage on custom blocks, accurate
-terrain/contraption geometry, and auto-aim integration still require engine work.
-There is no native Trailmakers plugin in this release.
+Version 0.4 renders the real Minecraft blocks, selection outlines, break cracks,
+projectiles, hand and UI over the Trailmakers first-person camera. It replaces
+per-frame image-file replacement with a shared memory mapping. Player motion and
+projectile surface queries use Trailmakers raycasts; placed blocks have hidden
+native collision cubes. Windows composition and both games together still need
+local validation. Native incoming weapon damage and custom auto-aim require engine
+work. There is no native Trailmakers plugin in this release.
 
 ## Download
 
-[Download the experimental prototype ZIP](https://github.com/Pruine/MineMakers/raw/refs/heads/main/downloads/MineMakers-experimental-0.3.1.zip).
+[Download the experimental prototype ZIP](https://github.com/Pruine/MineMakers/raw/refs/heads/main/downloads/MineMakers-experimental-0.4.0.zip).
 
 Extract the whole ZIP and open **`START-HERE.txt`**. Double-click
 **`Start-MineMakers-Overlay.cmd`** to run the UI helper. Paste the existing game
@@ -34,10 +35,10 @@ instructions. The limitations above still apply; this is not a finished crossove
   resolves a player box against Trailmakers raycasts every update and returns the pose.
   Minecraft physics cannot move the linked player. X is reflected between the two
   coordinate systems to keep turning and strafing aligned.
-- Experimental Windows overlay/input helper: real Minecraft hand, held item,
+- Experimental Windows overlay/input helper: real Minecraft world geometry, selection outlines, break cracks, projectiles, hand, held item,
   crosshair, hotbar, inventory and menus, with mouse look, click/scroll, typing and
   modifier forwarding. Requires Python 3.10+ and borderless/windowed Trailmakers.
-  Press F8 to capture/release while Trailmakers is focused. See [upgrade steps](docs/UPGRADE-0.3.md).
+  Press F8 to capture/release while Trailmakers is focused. See [upgrade steps](docs/UPGRADE-0.4.md).
 - Focusing Minecraft now preserves native Minecraft controls instead of forcing
   its view and hotbar back to the Trailmakers snapshot.
 - Vanilla wooden, stone, iron, golden, diamond and netherite swords; bow/arrows;
@@ -45,16 +46,20 @@ instructions. The limitations above still apply; this is not a finished crossove
   vanilla items, supplied by `/minemakers starter`, not reimplementations.
 - Vanilla survival/creative switching, flight and invulnerability on the Minecraft
   side. Creative invulnerability is also set on the paired Trailmakers player.
-- Trailmakers physical cubes for nearby solid Minecraft blocks. Ten progressive
-  crack overlays plus an undamaged texture. World persistence stays in Minecraft.
-- A file bridge with handshake, bounded snapshots, stale-input release, acknowledged
+- Invisible Trailmakers collision cubes for nearby solid Minecraft blocks. Vanilla
+  Minecraft renders the visible block shapes/textures and breaking stages. World
+  persistence stays in Minecraft. Native collision shapes are still simplified cubes.
+- A three-slot mapped image transport targeting 60 FPS, independent direct host
+  movement/mouse input, plus a file bridge with handshake, bounded snapshots, stale-input release, acknowledged
   combat events and duplicate-hit prevention.
 - Minecraft melee/projectile/TNT damage against invisible vanilla slime proxies
   representing nearby Trailmakers contraption blocks, forwarded to the native blocks
   with damage and impulse. Proxy geometry is approximate and needs in-game testing.
 - A dedicated empty Minecraft dimension isolates ordinary Minecraft terrain.
-  Temporary sampled barriers support item targeting/projectiles; player collision
-  uses Trailmakers rays directly, including horizontal and ceiling probes.
+  Temporary sampled barriers support item targeting. Player collision uses native
+  rays directly, including horizontal and ceiling probes. Arrows, thrown items
+  and TNT send bounded surface sweeps to Trailmakers while retaining their vanilla
+  trajectories/models; native hits trigger vanilla impacts, pearl teleport or TNT bounce.
 - Accumulated incoming block-damage logic: resistance from hardness/blast resistance,
   no more than 35% total health removed per native hit, progressive cracks, eventual
   destruction, and unbreakable bedrock. **The native weapon detector that would feed
@@ -68,7 +73,7 @@ instructions. The limitations above still apply; this is not a finished crossove
 | Native weapons damage Minecraft health with armor and knockback | No nonfatal native damage callback. Only a coarse native-death → Minecraft damage fallback exists; it cannot apply armor before native death. |
 | Native auto-aim locks on Minecraft players | The existing native player is retained as a hidden static trigger underneath the visual proxy. Target selection has not been verified; custom target registration is unavailable through documented Lua. |
 | Accurate world collision | Host ray probes approximate a player box. Small features between probes, moving-object penetration and moving-platform transport remain limitations; no native capsule sweep is available. |
-| Minecraft graphics in Trailmakers | Original world cube textures and avatar proxy. Real hand/HUD/inventory export is implemented via a Windows desktop overlay; actual compositing still needs Windows testing. No full world mesh/skin export. |
+| Minecraft graphics in Trailmakers | Real vanilla world/hand/UI via a transparent Windows desktop overlay. The two games do not share a depth buffer: Minecraft geometry can draw over native obstacles. Match window aspect ratios and the native camera FOV. |
 | Multiplayer | One local pair only. No dedicated-server bridge, player mapping, replication or authoritative multiplayer validation. |
 | SkyCraft-style automatic launch/hidden window | Launch Minecraft and the Windows helper manually. No launcher/account integration or automatic hiding. The helper is a desktop overlay, not a native Trailmakers renderer. |
 
@@ -89,7 +94,7 @@ python3 tools/package.py
 ```
 
 Windows: use `gradlew.bat` and `.tools\test-venv\Scripts\python.exe` as appropriate.
-The remapped mod is `fabric/build/libs/minemakers-fabric-0.3.1.jar`. The package tool
+The remapped mod is `fabric/build/libs/minemakers-fabric-0.4.0.jar`. The package tool
 requires that JAR; `--source-only` explicitly creates a developer source bundle.
 Do not mistake the `-sources.jar` for an installable mod.
 
@@ -98,7 +103,7 @@ physics, rendering, MoonSharp behavior or weapon behavior. The Gradle build has 
 JUnit tests; the separately invoked test harness is the test evidence.
 
 Development needs outbound access to Fabric/Minecraft repositories and Maven/Gradle.
-Runtime uses only two local files in the Trailmakers mod's `data_dynamic_willnotbeuploadedtoworkshop` directory;
+Runtime uses local frame files and one fixed image mapping in the Trailmakers mod's `data_dynamic_willnotbeuploadedtoworkshop` directory;
 there is no bridge TCP listener and no secret or token requirement.
 
 In this managed Linux workspace, `python3 tools/cloud_setup.py` additionally prepares

@@ -20,23 +20,30 @@ flowchart LR
 ## Ownership and limits
 
 - Only an explicit `/minemakers link` enables the bridge, and only in integrated
-  singleplayer. It uses the existing world in its current dimension; changing
-  dimension unlinks it. No worktrees are needed for development; use this checkout.
+  singleplayer. It transfers the linked player into the dedicated host dimension; changing
+  dimension after linking unlinks it. No worktrees are needed for development; use this checkout.
 - Minecraft uses origin (0,128,0) in the isolated `minemakers:trailmakers` dimension.
   Trailmakers player position at handshake becomes the host anchor. One block is
   one metre; +Y is up and +Z matches south. X is reflected at every host conversion
   because Minecraft and Unity have opposite handedness.
-- Vanilla barrier blocks represent sampled host ground for item targeting/projectiles,
+- Vanilla barrier blocks represent sampled host ground for item targeting,
   independently of player physics. We never overwrite non-air
   Minecraft blocks. Up to 2,048 owned barriers, 512 collider rows and 64 contraption
   proxies are accepted. Native `GetSize()` units are configurable; target sizes are
   exported but currently represented by small invisible slimes, not matching meshes.
-- Minecraft snapshots include up to 4,096 solid blocks in a 17×12×17 region and
-  nearby projectile/TNT positions. Other block shapes/types are simplified cubes;
-  liquids, vegetation, particles, lighting, full chunks and block entities are not rendered.
-- Original placeholder world textures provide wood, stone, bedrock, TNT and ten
-  crack stages. Minecraft itself now renders the first-person hand and item/HUD/GUI
-  layer. The third-person avatar is still a placeholder rather than an exported skin.
+- Minecraft snapshots include up to 4,096 solid blocks in a 17×12×17 region for
+  invisible native collision cubes. Non-cube collision shapes remain approximate.
+  Minecraft renders the actual placed block models, selection outlines, breaking
+  cracks, entities, particles and held items directly. Native placeholder textures
+  are retained for collision object creation and the optional legacy avatar.
+- The transparent world pass retains vanilla geometry but suppresses the sky,
+  weather, clouds, world border, distance fog, vignette and full-frame menu blur.
+  It clears before world geometry, rather than erasing the world before the hand.
+  Camera position/orientation use the latest host pose every render, bypassing
+  20 Hz player interpolation; view bobbing is suppressed to keep layers aligned.
+  CAMERA_FOV (vertical degrees, config default 60) matches the custom host lens.
+  Both windows must have the same aspect ratio. Depth is not shared between games;
+  Minecraft objects behind native terrain can still draw over it.
 
 ## File framing
 
@@ -140,7 +147,7 @@ row carries current intent at render rate. Lua integrates a local controller in
 substeps no larger than 1/120 second, resolving motion against live host rays.
 `HOST_POSE` returns the result. Only the linked Minecraft player has `Entity.move`
 and server move-packet processing cancelled; it follows that result without a
-second physics solver. Other Minecraft entities and unlinked players are unchanged.
+second physics solver. Unlinked worlds and players are unchanged; supported host projectiles also use native surface queries.
 Scene snapshots never overwrite host position. Reliable TELEPORT and PUSH events
 carry absolute Minecraft teleports and incoming knockback back to Lua; PLAYER_FALL
 reports host landing distance to Minecraft health logic.
@@ -191,19 +198,30 @@ An `InputUtil.isKeyPressed` hook exposes captured modifiers to vanilla shift-cli
 control shortcuts and other screen logic. Capture keeps `isPaused()` false so the
 singleplayer server does not freeze its scene stream while menus are open.
 
-While desktop capture is active, the game renderer clears color/depth immediately
-before vanilla first-person hand rendering. The real hand, item, hotbar, hearts,
-chat and current screen then render onto transparent color. Destination-color
-vignette and full-frame blur are suppressed because they otherwise make the whole
-export opaque. First-person perspective is selected during capture and the old
-perspective is restored on release. This path targets vanilla rendering; shader
-and renderer replacement mods are not validated.
+While desktop capture is active, the game renderer clears to transparent before
+world geometry. Vanilla blocks, selection lines, crack stages, projectiles, hand,
+HUD and screens remain in the framebuffer. Sky/weather/clouds, fog, view bobbing,
+vignette and blur are suppressed. First person is selected during capture and the
+old perspective is restored on release. This path targets vanilla rendering;
+shader and renderer replacement mods are not validated.
 
-`overlay.bgra` is atomic binary output, at most 1280×720 with a 60 FPS target. The 100-byte
-little-endian header is `<4sIIIQQI64s`: `MMOV`, version 1, width, height, image
-sequence, acknowledged desktop event ID, flags (bit 0 = menu open), and zero-padded
-ASCII desktop session token. Bottom-up BGRA pixel rows follow. GL blending produces
-premultiplied color suitable for Win32 `UpdateLayeredWindow`.
+`overlay.shared` is a fixed 11,059,624-byte READ_WRITE file mapping. Java and Python
+map the same local pages; no per-frame flush, file write/rename, or reopen is needed.
+The header is `MMMF`, version 1, three slots, maximum payload 3,686,500 bytes. An
+aligned little-endian uint64 descriptor at offset 16 publishes `(serial << 2)|slot`.
+Slots start at 64 with stride 3,686,520: uint64 epoch at +0, uint32 length at +8,
+payload at +16. Writer marks epoch `serial*2-1`, writes the image, release-commits
+`serial*2`, then release-publishes the descriptor. Reader checks the epoch before
+and after copying and retries a torn slot. Latest-frame selection bounds latency.
+The producer retains ownership of its buffer until the copy finishes.
+
+Each payload retains the 100-byte little-endian `<4sIIIQQI64s` header: `MMOV`,
+version 1, width, height, image sequence, acknowledged desktop event ID, flags
+(bit 0 = menu open), and zero-padded ASCII desktop session token. Bottom-up BGRA
+pixels follow, at most 1280×720. GL blending supplies premultiplied color for Win32
+`UpdateLayeredWindow`. The updated helper can read legacy `overlay.bgra` only when
+no shared mapping exists. Do not mix old/new components; stop both games/helper
+before removing an obsolete mapping.
 
 The helper rejects oversized/truncated/stale images and images for another desktop
 session. It scales the image to Trailmakers' client rectangle and draws a virtual
@@ -230,3 +248,32 @@ This removes per-frame multi-megabyte heap allocation and a read/clear race in t
 previous volatile handoff. The helper enables precise Windows timer resolution
 while armed and restores it on release. Frame timing is reported in
 `minemakers-client-status.txt`; native Windows performance remains to be measured.
+
+## 0.4 native queries and independent input
+
+Minecraft publishes `projectiles.frame` at server tick rate through the fast bridge
+worker. Each bounded `PROJECTILE uuid probeSequence startX startY startZ endX endY
+endZ` row represents an arrow, vanilla thrown item or primed TNT motion segment,
+relative to the host origin. Lua raycasts those segments against actual native
+surfaces, including the hidden block colliders, and reliably returns `EVENT id
+PROJECTILE_HIT uuid probeSequence hitX hitY hitZ normalX normalY normalZ`.
+Java verifies the hit against a retained probe and invokes vanilla projectile
+impact logic; arrows remain anchored at native impacts for up to 60 seconds and
+can be picked up. TNT bounces with damped velocity while retaining its vanilla fuse.
+Minecraft block collision is bypassed for those entities only in the host dimension.
+Entity hits and existing contraption combat proxies still use vanilla logic.
+Queries are point sweeps at 20 Hz with a round-trip correction delay; they do not
+supply rigid-body mesh physics or native explosion occlusion.
+
+`control.frame` additionally carries `DESKTOP_LOOK desktopSession appliedMouseX
+appliedMouseY yawScale pitchScale` and `KEYMAP action glfwKey`. Lua reads matching
+fresh `desktop.frame` input directly each update, applying the mouse delta beyond
+Minecraft's acknowledged baseline. Native camera/movement no longer wait for
+Minecraft rendering. When the baseline advances the delta is not applied twice.
+Menus and stale/mismatched sessions stop movement. Unsupported mouse/scancode
+movement bindings use the normal Minecraft CONTROL fallback.
+
+Client status reports render/capture/mapping-write FPS. The Windows helper reports
+read/present/input FPS and average copy/composition duration separately in
+`minemakers-overlay-status.txt`. A slow compositor can therefore be distinguished
+from a slow game renderer or transport.

@@ -1,16 +1,16 @@
-MineMakers 0.3.1 -- Trailmakers-owned player movement and collisions
+MineMakers 0.4.0 -- Minecraft rendering, Trailmakers collisions
 
 EXTRACT THE WHOLE ZIP. Exit both games and close the old helper before upgrading.
 Replace ALL parts: Minecraft JAR, Trailmakers main.lua + data_static, and helper.
 Keep only one MineMakers JAR. Keep firstPerson=true in the new config.lua.
 No Gradle build is needed: Minecraft/mods contains the compiled JAR.
 
-Read docs/UPGRADE-0.3.md for installation and validation details.
-0.3.1 fixes mod-root asset paths and unsupported tm.enums access.
+Read docs/UPGRADE-0.4.md for installation and validation details.
+0.4.0 adds real Minecraft blocks, outlines and projectiles, and mapped frame delivery.
 Keep textures and cube.obj under data_static; do not move them into the mod root.
 
 1. Install Minecraft 1.21.1, Java 21, Fabric Loader and matching Fabric API.
-2. Copy Minecraft/mods/minemakers-fabric-0.3.1.jar into Minecraft's mods folder.
+2. Copy Minecraft/mods/minemakers-fabric-0.4.0.jar into Minecraft's mods folder.
 3. Copy Trailmakers/main.lua and data_static into your generated Trailmakers mod.
 4. Start Trailmakers outside a seat, enable the mod, and start Minecraft singleplayer.
 5. Run /minemakers link "C:/.../data_dynamic_willnotbeuploadedtoworkshop" in Minecraft.
@@ -24,10 +24,12 @@ W/A/S/D: move | mouse: look | Space: jump | Shift: crouch | Ctrl: sprint | E: in
 Creative double-Space: flight | Space/Shift: ascend/descend
 
 Helper scripts are in tools/, not in the game's frame folder.
-Frames: trailmakers.frame, minecraft.frame, control.frame, desktop.frame, overlay.bgra.
+Frames: trailmakers.frame, minecraft.frame, control.frame, desktop.frame, projectiles.frame.
+Images use overlay.shared (a fixed shared mapping, not per-frame file replacement).
 Old view.frame files are ignored. Do not combine this Lua with an older JAR.
 Diagnostics: minemakers-status.txt shows startup/API errors.
 minemakers-client-status.txt shows measured frame rates while F8 is active.
-Both are in the frame folder, alongside minemakers-runtime-api.txt.
+The helper also writes minemakers-overlay-status.txt for read/present timing.
+All are in the frame folder, alongside minemakers-runtime-api.txt.
 
 Actual Trailmakers camera/physics and Windows compositing still need in-game testing.

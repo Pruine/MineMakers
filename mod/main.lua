@@ -4,6 +4,12 @@ local C=tm.os.DoFile('config')
 local Locomotion=tm.os.DoFile('locomotion')
 local motion=nil
 local control=nil
+local lookBaseline=nil
+local keymap={}
+local desktopSeq=-1
+local desktopSession=nil
+local desktopInput=nil
+local desktopFresh=-100
 local controlFresh=-100
 local lastUpdate=nil
 local bodyStatic=nil
@@ -25,6 +31,8 @@ local anchor=nil
 local objects,entities,avatar={},{},{}
 local nativeTargets,activeTargets={},{}
 local nextTarget=0
+local projectileSeq=-1
+local projectileHits={}
 local keys={}
 local session='tm_'..tostring(math.floor(tm.os.GetRealtimeSinceStartup()*1000))..'_'..tostring(math.random(100000,999999))
 local seq,lastMcSeq,lastEvent,hostEvent=0,-1,0,0
@@ -119,7 +127,8 @@ local function applyView(p)
     end
 end
 local function cleanup()
-    motion=nil; control=nil; controlFresh=-100; lastUpdate=nil; lastCameraAttempt=-100; anchor=nil; player=nil
+    projectileSeq=-1; projectileHits={}
+    motion=nil; control=nil; lookBaseline=nil; desktopInput=nil; desktopFresh=-100; desktopSeq=-1; desktopSession=nil; controlFresh=-100; lastUpdate=nil; lastCameraAttempt=-100; anchor=nil; player=nil
     if cameraCreated then
         attempt('camera release',function() tm.players.DeactivateCamera(C.playerId,0) end)
         attempt('camera removal',function() tm.players.RemoveCamera(C.playerId) end)
@@ -237,18 +246,16 @@ renderScene=function(p,blocks,es,events,ack,hotbar)
     for _,b in ipairs(blocks) do
         local k=key(b.pos); seen[k]=true; local previous=objects[k]
         local tex=texture(b.material)..'_'..math.max(0,math.min(10,math.floor(b.stage+1)))
-        if not previous then previous={object=cube(point(b.pos.x+0.5,b.pos.y+0.5,b.pos.z+0.5),tex,1,true)}; objects[k]=previous
+        if not previous then
+            previous={object=cube(point(b.pos.x+0.5,b.pos.y+0.5,b.pos.z+0.5),tex,1,true)}
+            previous.object.SetIsVisible(false) -- only a collider; Minecraft supplies the visible block
+            objects[k]=previous
         elseif previous.texture~=tex then previous.object.SetTexture(tex) end
         previous.texture=tex
     end
     for k,b in pairs(objects) do if not seen[k] then destroy(b.object); objects[k]=nil end end
-    seen={}
-    for _,e in ipairs(es) do
-        seen[e.id]=true
-        if not entities[e.id] then entities[e.id]=cube(e.pos,string.find(e.kind,'tnt',1,true) and 'tnt_0' or 'pearl',0.2,false) end
-        entities[e.id].GetTransform().SetPosition(world(e.pos))
-    end
-    for id,e in pairs(entities) do if not seen[id] then destroy(e); entities[id]=nil end end
+    -- Projectile/TNT pixels now come directly from Minecraft's interpolated entity renderer.
+    for id,e in pairs(entities) do destroy(e); entities[id]=nil end
     if C.firstPerson==false then
         local parts={
             {name='head',x=0,y=1.5,z=0,scale=V(0.5,0.5,0.5),tex='skin'},
@@ -275,6 +282,39 @@ local function enqueue(kind,...)
     local row={'EVENT',hostEvent,kind}; local args={...}
     for _,v in ipairs(args) do row[#row+1]=v end
     pending[#pending+1]=row; return true
+end
+-- Surface collision queries run independently of the slower scene snapshots.
+local function projectileCollisions()
+    if not linked or not mcSession or not anchor then return end
+    local ok,text=pcall(tm.os.ReadAllText_Dynamic,'projectiles.frame')
+    if not ok then return end
+    local frame=W.decode(text)
+    if frame.session~=mcSession or frame.sequence<=projectileSeq then return end
+    local probes={}
+    for _,r in ipairs(frame.records) do
+        if #probes>=128 then break end
+        if #r~=9 or r[1]~='PROJECTILE' or not string.match(r[2],'^[a-fA-F0-9%-]+$') or #r[2]~=36 then error('Bad projectile query') end
+        probes[#probes+1]={id=r[2],sequence=W.number(r[3]),a=pos(r[4],r[5],r[6]),b=pos(r[7],r[8],r[9])}
+    end
+    for _,probe in ipairs(probes) do
+        if projectileHits[probe.id]~=probe.sequence then
+            local a,b=probe.a,probe.b
+            local dx,dy,dz=b.x-a.x,b.y-a.y,b.z-a.z
+            local distance=math.sqrt(dx*dx+dy*dy+dz*dz)
+            if distance>0.00001 and distance<=64 then
+                local hit=tm.physics.RaycastData(world(a),V(-dx/distance,dy/distance,dz/distance),distance,true)
+                if hit.DidHit() then
+                    local at=relative(hit.GetHitPosition())
+                    local normal=hit.GetHitNormal()
+                    if enqueue('PROJECTILE_HIT',probe.id,probe.sequence,at.x,at.y,at.z,-normal.x,normal.y,normal.z) then
+                        projectileHits[probe.id]=probe.sequence
+                    end
+                end
+            end
+        end
+    end
+    local seen={}; for _,probe in ipairs(probes) do seen[probe.id]=projectileHits[probe.id] end
+    projectileHits=seen; projectileSeq=frame.sequence
 end
 -- Integration points for a FUTURE version-specific native weapon bridge.
 -- Public Trailmakers Lua provides no damage callbacks for custom objects; these are NOT wired automatically.
@@ -334,23 +374,58 @@ local function readView(now)
     if not valid then controlError='invalid control.frame: '..tostring(frame); return end
     if frame.session~=mcSession then controlError='control.frame session does not match linked Minecraft'; return end
     if frame.sequence<=lastViewSeq then return end
-    if #frame.records~=1 then controlError='unexpected control.frame row count'; return end
-    local r=frame.records[1]
+    local r=nil; local baseline=nil; local bindings={}
+    for _,row in ipairs(frame.records) do
+        if row[1]=='CONTROL' then r=row
+        elseif row[1]=='DESKTOP_LOOK' and #row==6 then baseline={session=row[2],x=W.number(row[3]),y=W.number(row[4]),sx=W.number(row[5]),sy=W.number(row[6])}
+        elseif row[1]=='KEYMAP' and #row==3 then bindings[row[2]]=W.number(row[3]) end
+    end
+    if not r then controlError='CONTROL row missing'; return end
     if #r~=13 or r[1]~='CONTROL' then return end
     local next={forward=W.number(r[2]),sideways=W.number(r[3]),jump=r[4]=='1',sneak=r[5]=='1',sprint=r[6]=='1',
         flying=r[7]=='1',creative=r[8]=='1',yaw=W.number(r[9]),pitch=W.number(r[10]),eyeHeight=W.number(r[11]),menu=r[12]=='1'}
     if math.abs(next.forward)>1 or math.abs(next.sideways)>1 or next.eyeHeight<0 or next.eyeHeight>3 then return end
-    controlError=''; control=next; controlFresh=now
+    controlError=''; control=next; controlFresh=now; lookBaseline=baseline; keymap=bindings
     player.yaw=next.yaw; player.pitch=next.pitch; player.eyeHeight=next.eyeHeight
     lookYaw=next.yaw; pitch=next.pitch
     lastViewSeq=frame.sequence; lastFresh=now
 end
+local function readDesktop(now)
+    if not linked or not lookBaseline then return end
+    local ok,text=pcall(tm.os.ReadAllText_Dynamic,'desktop.frame')
+    if not ok then return end
+    local valid,frame=pcall(W.decode,text)
+    if not valid or frame.session~=lookBaseline.session then return end
+    if frame.session==desktopSession and frame.sequence<=desktopSeq then return end
+    local next={active=false,held={},x=0,y=0}
+    for _,r in ipairs(frame.records) do
+        if r[1]=='ACTIVE' then next.active=r[2]=='1'
+        elseif r[1]=='POINTER' and #r==5 then next.x=W.number(r[2]); next.y=W.number(r[3])
+        elseif r[1]=='HELD' and #r==2 then next.held[W.number(r[2])]=true end
+    end
+    desktopInput=next; desktopFresh=now; desktopSession=frame.session; desktopSeq=frame.sequence
+end
+local function immediateControl(now)
+    local d=desktopInput; local base=lookBaseline
+    if not control or not base or not d or not d.active or desktopSession~=base.session or now-desktopFresh>0.25 or now-controlFresh>2 then return nil end
+    local result={}; for k,v in pairs(control) do result[k]=v end
+    if control.menu then return result end
+    result.yaw=control.yaw+math.max(-100000,math.min(100000,d.x-base.x))*base.sx
+    result.pitch=math.max(-90,math.min(90,control.pitch+math.max(-100000,math.min(100000,d.y-base.y))*base.sy))
+    local function held(action,fallback) local k=keymap[action]; if k then return d.held[k] or false end; return fallback end
+    if keymap.forward and keymap.back then result.forward=(held('forward',false) and 1 or 0)-(held('back',false) and 1 or 0) end
+    if keymap.left and keymap.right then result.sideways=(held('left',false) and 1 or 0)-(held('right',false) and 1 or 0) end
+    result.jump=held('jump',control.jump); result.sneak=held('sneak',control.sneak); result.sprint=held('sprint',control.sprint)
+    return result
+end
 local function move(now)
     if not linked or not motion then return end
     local dt=math.max(0,math.min(0.1,now-(lastUpdate or now))); lastUpdate=now
-    local input=control
-    if not input or now-controlFresh>0.25 then input={forward=0,sideways=0,yaw=player.yaw,creative=player.creative,flying=motion.flying} end
+    local immediate=immediateControl(now)
+    local input=immediate or control
+    if not input or (not immediate and now-controlFresh>0.25) then input={forward=0,sideways=0,yaw=player.yaw,creative=player.creative,flying=motion.flying} end
     if input.menu then input={forward=0,sideways=0,yaw=player.yaw,creative=player.creative,flying=motion.flying} end
+    player.yaw=input.yaw or player.yaw; player.pitch=input.pitch or player.pitch
     local steps=math.max(1,math.ceil(dt*120)); local fall=0
     for i=1,steps do fall=math.max(fall,motion:step(input,dt/steps)) end
     if fall>3 then enqueue('PLAYER_FALL',fall) end
@@ -373,6 +448,7 @@ local function write()
         local yaw=lookYaw
         rows[#rows+1]={'LINK',mcSession}
         rows[#rows+1]={'ACK',lastEvent}
+        rows[#rows+1]={'CAMERA_FOV',C.cameraFov or 60}
         rows[#rows+1]={'HOST_POSE',motion.pos.x,motion.pos.y,motion.pos.z,player.yaw,player.pitch,motion.grounded and 1 or 0,motion.flying and 1 or 0,motion.crouch and 1 or 0}
         rows[#rows+1]={'INPUT',flag('w'),flag('s'),flag('a'),flag('d'),flag('space'),flag('left shift'),flag('f'),flag('g'),yaw,pitch,0,slot}
         local now=tm.os.GetRealtimeSinceStartup()
@@ -417,7 +493,7 @@ function update()
             if valid and (frame.session~=mcSession or frame.sequence>lastMcSeq) then
                 local applied,err=pcall(commit,frame.records,frame.session~=mcSession)
                 if applied then
-                    if mcSession~=frame.session then pending={}; hostEvent=0 end
+                    if mcSession~=frame.session then pending={}; hostEvent=0; projectileSeq=-1; projectileHits={} end
                     mcSession=frame.session; lastMcSeq=frame.sequence; lastFresh=now; warned=false; startupError=''
                 else
                     startupError=tostring(err)
@@ -427,6 +503,8 @@ function update()
         end
         if now-lastFresh>C.timeout and linked then cleanup(); keys={}; message('Java disconnected; controls restored') end
     end
+    attempt('projectile collisions',projectileCollisions)
+    attempt('desktop input',function() readDesktop(now) end)
     local moved,moveError=pcall(move,now)
     local problem=moved and '' or tostring(moveError)
     if problem~=movementError and not moved then message('Movement error: '..problem); tm.os.Log(problem) end
@@ -435,7 +513,7 @@ function update()
         lastStatus=now
         updateRate=updateCount/math.max(0.001,now-statusSince); updateCount=0; statusSince=now
         local state=cameraError~='' and ('camera error: '..cameraError) or (camera and 'first-person API active' or 'camera waiting')
-        local lines={'MineMakers 0.3.1 | player '..C.playerId..' | '..state,
+        local lines={'MineMakers 0.4.0 | player '..C.playerId..' | '..state,
             'Host movement: '..tostring(linked)..' | control age: '..(now-controlFresh),
             'Host session: '..session..' | Minecraft session: '..tostring(mcSession),
             'Startup error: '..(startupError~='' and startupError or 'none'),

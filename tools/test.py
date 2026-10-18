@@ -8,7 +8,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 import struct
-from desktop_protocol import HEADER, InputQueue, decode_overlay, resolve_directory, FrameWriter, TimerResolution
+from desktop_protocol import HEADER, InputQueue, decode_overlay, resolve_directory, FrameWriter, TimerResolution, OverlayMapping
 from lupa.lua52 import LuaRuntime
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -56,6 +56,7 @@ class Tests(unittest.TestCase):
         solid = [v for _,v in test.spawns.items() if v.alive and not v.trigger]
         self.assertEqual(len(solid),1)
         self.assertEqual(solid[0].texture,'stone_0')
+        self.assertFalse(solid[0].visible,'Minecraft renders blocks; host geometry must only provide collision')
         # Accumulated damage changes only the texture, preserving the physical collider.
         snapshot(2,damage=True,stage=4); tick(0.9)
         self.assertEqual(solid[0].texture,'stone_5')
@@ -146,6 +147,44 @@ class Tests(unittest.TestCase):
         test.time=2;self.lua.globals().update()
         self.assertIn('Waiting for current host handshake',test.files['minemakers-status.txt'])
 
+    def test_immediate_host_input_does_not_wait_for_minecraft_rendering(self):
+        test,host=self.start_adapter();self.send_player(test,host)
+        controls=[['CONTROL',0,0,0,0,0,0,1,0,0,1.62,0,0],['DESKTOP_LOOK','desktop_test',0,0,.15,.15],
+            ['KEYMAP','forward',87],['KEYMAP','back',83],['KEYMAP','left',65],['KEYMAP','right',68]]
+        test.files['control.frame']=self.wire.encode('mc_test',1,self.rows(controls))
+        test.files['desktop.frame']=self.wire.encode('desktop_test',1,self.rows([['ACTIVE',1],['POINTER',600,0,.5,.5],['HELD',87]]))
+        test.time=.62;self.lua.globals().update()
+        self.assertAlmostEqual(test.cameraDirection.x,1)
+        # Minecraft publishes no new control; native input remains smooth and follows that same look.
+        test.files['desktop.frame']=self.wire.encode('desktop_test',2,self.rows([['ACTIVE',1],['POINTER',600,0,.5,.5],['HELD',87]]))
+        test.time=.72;self.lua.globals().update()
+        self.assertGreater(test.cameraPosition.x,0)
+        controls[0][8]=90;controls[1][2]=600
+        test.files['control.frame']=self.wire.encode('mc_test',2,self.rows(controls))
+        test.time=.74;self.lua.globals().update()
+        self.assertAlmostEqual(test.cameraDirection.x,1,msg='Acknowledging mouse deltas must not apply them twice')
+    def test_projectiles_use_native_surface_queries(self):
+        test,host=self.start_adapter();self.send_player(test,host)
+        projectile='12345678-1234-1234-1234-123456789abc'
+        def publish(seq,session='mc_test'):
+            # Native ground is at y=4, anchor y=5; ray crosses that real surface.
+            test.files['projectiles.frame']=self.wire.encode(session,seq,self.rows([['PROJECTILE',projectile,seq,0,0,0,0,-2,0]]))
+            test.time+=.02;self.lua.globals().update()
+        publish(1,'wrong_session')
+        self.assertNotIn('PROJECTILE_HIT',test.files['trailmakers.frame'])
+        publish(1)
+        out=self.wire.decode(test.files['trailmakers.frame'])
+        hits=[r for _,r in out.records.items() if r[1]=='EVENT' and r[3]=='PROJECTILE_HIT']
+        self.assertEqual(len(hits),1)
+        self.assertEqual(hits[0][4],projectile)
+        self.assertEqual(float(hits[0][7]),-1)
+        self.assertEqual(float(hits[0][10]),1)
+        publish(1)
+        out=self.wire.decode(test.files['trailmakers.frame'])
+        hits=[r for _,r in out.records.items() if r[1]=='EVENT' and r[3]=='PROJECTILE_HIT']
+        self.assertEqual(len(hits),1,'A repeated probe must not queue the impact twice')
+        self.assertFalse(any(v.alive for _,v in test.spawns.items()),'Minecraft renders projectiles; no native visual proxy')
+
     def test_windows_capture_timer_is_balanced(self):
         calls=[]
         timer=TimerResolution(lambda ms: calls.append(('begin',ms)) or 0,lambda ms: calls.append(('end',ms)) or 0)
@@ -228,9 +267,32 @@ class Tests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             d=Path(directory)
             (d/'lua.frame').write_text(self.wire.encode('lua_test',1,self.rows([['ACK',1],['LINK','session_1']])))
-            files=[ROOT/'fabric/src/main/java/dev/minemakers/bridge'/f for f in ('Wire.java','BlockDamage.java','DesktopInput.java','HostPose.java','FramePacer.java','OverlayFrames.java')]
-            subprocess.run([javac,'--release','21','-d',str(d),*[str(p) for p in files],str(ROOT/'tests/ProtocolTest.java')],check=True)
+            files=[ROOT/'fabric/src/main/java/dev/minemakers/bridge'/f for f in ('Wire.java','BlockDamage.java','DesktopInput.java','HostPose.java','FramePacer.java','OverlayFrames.java','SharedOverlayWriter.java')]
+            subprocess.run([javac,'--release','21','-d',str(d),*[str(p) for p in files],str(ROOT/'tests/ProtocolTest.java'),str(ROOT/'tests/SharedFramesTest.java')],check=True)
             subprocess.run([java,'-cp',str(d),'ProtocolTest',str(d)],check=True)
+            import time
+            mapping=None; samples=0; last=0
+            process=subprocess.Popen([java,'-cp',str(d),'SharedFramesTest',str(d/'overlay.shared')])
+            try:
+                deadline=time.monotonic()+8
+                while time.monotonic()<deadline:
+                    if mapping is None:
+                        try: mapping=OverlayMapping(d/'overlay.shared')
+                        except (OSError,ValueError): time.sleep(.002);continue
+                    frame=mapping.read()
+                    if frame is not None:
+                        self.assertEqual(frame.session,'shared_test')
+                        self.assertEqual(frame.pixels.count(frame.sequence),len(frame.pixels),'A published image must never contain mixed frames')
+                        samples+=1;last=frame.sequence
+                    if process.poll() is not None and last==121: break
+                    time.sleep(.001)
+                self.assertEqual(process.wait(timeout=2),0)
+                self.assertEqual(last,121)
+                self.assertGreater(samples,2)
+                self.assertIsNone(mapping.read(),'A frozen mapping must not appear fresh')
+            finally:
+                if mapping is not None: mapping.close()
+                if process.poll() is None: process.terminate();process.wait(timeout=3)
             decoded=self.wire.decode((d/'java.frame').read_text())
             self.assertEqual(decoded.session,'session_1')
             self.assertEqual(decoded.records[2][5],'minecraft:stone')

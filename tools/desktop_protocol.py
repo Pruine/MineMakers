@@ -119,3 +119,48 @@ class TimerResolution:
         elif not enabled and self.active:
             self.end(1)
             self.active = False
+
+
+class OverlayMapping:
+    """Read complete frames from Java's three-slot memory-mapped image transport."""
+    MAX_FRAME = 100 + 1280 * 720 * 4
+    STRIDE = 16 + ((MAX_FRAME + 7) & ~7)
+    SIZE = 64 + 3 * STRIDE
+
+    def __init__(self, path):
+        import mmap
+        self.file = Path(path).open('rb')
+        try:
+            if os.fstat(self.file.fileno()).st_size != self.SIZE:
+                raise ValueError('Unsupported overlay mapping size')
+            self.memory = mmap.mmap(self.file.fileno(), self.SIZE, access=mmap.ACCESS_READ)
+            if struct.unpack_from('<4sIII', self.memory) != (b'MMMF', 1, 3, self.MAX_FRAME):
+                self.memory.close()
+                raise ValueError('Unsupported overlay mapping header')
+        except BaseException:
+            self.file.close()
+            raise
+        self.last = 0
+
+    def read(self):
+        for _ in range(3):
+            published = struct.unpack_from('<Q', self.memory, 16)[0]
+            serial, slot = published >> 2, published & 3
+            if not serial or slot >= 3 or published == self.last:
+                return None
+            offset = 64 + slot * self.STRIDE
+            before = struct.unpack_from('<Q', self.memory, offset)[0]
+            size = struct.unpack_from('<I', self.memory, offset + 8)[0]
+            if before != serial * 2 or not 100 <= size <= self.MAX_FRAME:
+                continue
+            data = self.memory[offset + 16:offset + 16 + size]
+            if struct.unpack_from('<Q', self.memory, offset)[0] != before:
+                continue
+            frame = decode_overlay(data)
+            self.last = published
+            return frame
+        return None
+
+    def close(self):
+        self.memory.close()
+        self.file.close()

@@ -32,7 +32,7 @@ public final class MineMakers implements ModInitializer {
     private static String hostSession="";
     private static final Map<Long,String[]> events=new LinkedHashMap<>();
     private static final Map<String,SlimeEntity> targets=new HashMap<>();
-    private static final Map<UUID,String> targetIds=new HashMap<>();
+    private static final Map<UUID,String> targetIds=new java.util.concurrent.ConcurrentHashMap<>();
     private static final BlockDamage damage=new BlockDamage();
     private static long ticks;
     private static long lastHostEvent=0;
@@ -48,6 +48,8 @@ public final class MineMakers implements ModInitializer {
     public static boolean isHostPlayer(Entity entity) {
         return bridge!=null && playerId!=null && playerId.equals(entity.getUuid());
     }
+    public static boolean isHostWorld(net.minecraft.world.World world) { return bridge!=null && world.getRegistryKey().equals(HOST_WORLD); }
+    public static boolean isHostTarget(Entity entity) { return bridge!=null && targetIds.containsKey(entity.getUuid()); }
     private static final Map<Long,BlockState> damagedStates=new HashMap<>();
 
     @Override public void onInitialize() {
@@ -64,6 +66,9 @@ public final class MineMakers implements ModInitializer {
                         if (hostWorld==null) {
                             c.getSource().sendError(Text.literal("MineMakers host dimension missing. Restart Minecraft after installing the updated JAR.")); return 0;
                         }
+                        // Remove only our tagged proxies (or the exact legacy proxy signature) after a crash/restart.
+                        for (Entity old:hostWorld.iterateEntities()) if (old.getCommandTags().contains("minemakers_target") ||
+                            (old instanceof SlimeEntity slime && slime.isAiDisabled() && slime.hasNoGravity() && slime.isSilent() && slime.isPersistent() && slime.getSize()==1)) old.discard();
                         Path directory=Path.of(StringArgumentType.getString(c,"directory")).toAbsolutePath();
                         if (!java.nio.file.Files.isDirectory(directory)) {
                             c.getSource().sendError(Text.literal("Bridge directory does not exist; use the Trailmakers folder containing trailmakers.frame.")); return 0;
@@ -119,15 +124,20 @@ public final class MineMakers implements ModInitializer {
         return bridge!=null && Bridge.input(f,bridge.session())!=null;
     }
     private static void tick(MinecraftServer server) {
-        if (bridge==null || playerId==null) return;
+        if (bridge==null || playerId==null) {
+            // A crashed/closed bridge cannot leave its saved player falling in an empty dimension.
+            if (server.isSingleplayer()) for (ServerPlayerEntity stranded:server.getPlayerManager().getPlayerList()) {
+                if (!stranded.isAlive() || !stranded.getWorld().getRegistryKey().equals(HOST_WORLD)) continue;
+                ServerWorld safe=server.getOverworld(); BlockPos spawn=safe.getSpawnPos();
+                int y=Math.max(spawn.getY(),safe.getTopY(net.minecraft.world.Heightmap.Type.MOTION_BLOCKING_NO_LEAVES,spawn.getX(),spawn.getZ()));
+                stranded.teleport(safe,spawn.getX()+.5,y+1,spawn.getZ()+.5,safe.getSpawnAngle(),0);
+                stranded.sendMessage(Text.literal("MineMakers restored your player to the overworld spawn after an unlinked session. Link again when both games are running."),false);
+            }
+            return;
+        }
         ServerPlayerEntity p=server.getPlayerManager().getPlayer(playerId);
         if (p==null || p.getServerWorld()!=linkedWorld) { unlink(); return; }
         ticks++;
-        if (lastResolved!=null && pendingTeleport==null && p.getPos().squaredDistanceTo(lastResolved)>0.25) {
-            pendingTeleport=p.getPos();
-            Vec3d target=pendingTeleport.subtract(origin);
-            event("TELEPORT",target.x,target.y,target.z);
-        }
         Bridge.HostFrame host=bridge.current();
         colliders=Bridge.colliders(host,bridge.session());
         if (host!=null && linked(host) && (!hostSession.equals(host.wire().session()) || host.wire().sequence()>lastHostSequence)) {
@@ -135,6 +145,12 @@ public final class MineMakers implements ModInitializer {
             lastHostSequence=host.wire().sequence();
             applyHost(p,host.wire());
         }
+        if (lastResolved!=null && pendingTeleport==null && p.getPos().squaredDistanceTo(lastResolved)>0.25) {
+            pendingTeleport=p.getPos();
+            Vec3d target=pendingTeleport.subtract(origin);
+            event("TELEPORT",target.x,target.y,target.z);
+        }
+        HostProjectiles.publish(p,bridge);
         HostPose pose=host==null ? null : HostPose.read(host.wire(),bridge.session());
         if (pose!=null) {
             Vec3d at=origin.add(pose.x(),pose.y(),pose.z());
@@ -207,19 +223,22 @@ public final class MineMakers implements ModInitializer {
                         r=Bridge.row("PLAYER_FALL",r[3]);
                     else if (r.length==7 && r[2].equals("PLAYER_HIT"))
                         r=Bridge.row("PLAYER_HIT",r[3],r[4],r[5],r[6]);
-                    else continue;
+                    else if (r.length==11 && r[2].equals("PROJECTILE_HIT")) {
+                        HostProjectiles.hit(p,r); lastHostEvent=id; continue;
+                    } else continue;
                     lastHostEvent=id;
                 }
                 if (r.length==2 && r[0].equals("ACK")) {
                     long ack=Long.parseLong(r[1]); events.keySet().removeIf(id -> id<=ack);
                 } else if (r.length==8 && r[0].equals("TARGET") && seen.size()<64) {
                     String id=r[1]; if (!id.matches("[A-Za-z0-9_-]{1,64}")) continue;
-                    Vec3d relative=Bridge.point(r,2); if (relative.lengthSquared()>4096) continue;
+                    Vec3d relative=Bridge.point(r,2); if (origin.add(relative).squaredDistanceTo(p.getPos())>4096) continue;
                     Vec3d at=origin.add(relative); SlimeEntity entity=targets.get(id);
                     if (entity==null || entity.isRemoved()) {
+                        if (entity!=null) targetIds.remove(entity.getUuid());
                         entity=EntityType.SLIME.create(p.getServerWorld()); if (entity==null) continue;
                         entity.setAiDisabled(true); entity.setNoGravity(true); entity.setSilent(true); entity.setInvisible(true); entity.setPersistent();
-                        entity.setSize(1,true); p.getServerWorld().spawnEntity(entity);
+                        entity.addCommandTag("minemakers_target"); entity.setSize(1,true); p.getServerWorld().spawnEntity(entity);
                         targets.put(id,entity); targetIds.put(entity.getUuid(),id);
                     }
                     entity.refreshPositionAndAngles(at.x,at.y,at.z,0,0); seen.add(id);
@@ -266,7 +285,7 @@ public final class MineMakers implements ModInitializer {
     }
     private static void unlink() {
         if (linkedWorld!=null) for (BlockPos pos:terrain) if (linkedWorld.getBlockState(pos).isOf(Blocks.BARRIER)) linkedWorld.setBlockState(pos,Blocks.AIR.getDefaultState());
-        terrain.clear();
+        terrain.clear(); HostProjectiles.clear();
         if (bridge!=null) bridge.close(); bridge=null; playerId=null; colliders=List.of();
         for (SlimeEntity e:targets.values()) e.discard(); targets.clear(); targetIds.clear(); events.clear();
         if (linkedWorld!=null) for (long key:crackStages.keySet()) linkedWorld.setBlockBreakingInfo(crackId(BlockPos.fromLong(key)),BlockPos.fromLong(key),-1);

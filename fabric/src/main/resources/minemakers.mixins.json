@@ -4,7 +4,10 @@
   "compatibilityLevel": "JAVA_21",
   "mixins": [
     "HostPlayerMovementMixin",
-    "HostPlayerNetworkMixin"
+    "HostPlayerNetworkMixin",
+    "ProjectileCollisionInvoker",
+    "HostProjectileCollisionMixin",
+    "HostArrowCollisionMixin"
   ],
   "client": [
     "KeyBindingAccessor",
@@ -12,7 +15,12 @@
     "GameRendererOverlayMixin",
     "InGameHudOverlayMixin",
     "DesktopInputMixin",
-    "DesktopPauseMixin"
+    "DesktopPauseMixin",
+    "WorldRendererOverlayMixin",
+    "BackgroundFogOverlayMixin",
+    "HostCameraMixin",
+    "HostInteractionCameraMixin",
+    "HostTargetRenderMixin"
   ],
   "injectors": {
     "defaultRequire": 1

@@ -21,6 +21,8 @@ public final class DesktopController {
     public static long ack() { return lastEvent; }
     public static String session() { return session; }
     public static boolean active() { return active; }
+    public static double pointerX() { return totalX; }
+    public static double pointerY() { return totalY; }
     public static void release() {
         for (int key:held) KeyBinding.setKeyPressed(InputUtil.fromKeyCode(key,0),false);
         held.clear();
@@ -50,7 +52,7 @@ public final class DesktopController {
         if (mc.currentScreen==null) {
             double sensitivity=mc.options.getMouseSensitivity().getValue()*0.6+0.2;
             double scale=sensitivity*sensitivity*sensitivity*8;
-            double dx=Math.clamp(input.totalX()-totalX,-2000,2000),dy=Math.clamp(input.totalY()-totalY,-2000,2000);
+            double dx=Math.clamp(input.totalX()-totalX,-100000,100000),dy=Math.clamp(input.totalY()-totalY,-100000,100000);
             mc.player.changeLookDirection(dx*scale,dy*scale*(mc.options.getInvertYMouse().getValue() ? -1 : 1));
         } else mc.currentScreen.mouseMoved(input.cursorX()*mc.getWindow().getScaledWidth(),input.cursorY()*mc.getWindow().getScaledHeight());
         totalX=input.totalX(); totalY=input.totalY();

@@ -19,6 +19,8 @@ public final class Bridge implements AutoCloseable {
     private final String session=UUID.randomUUID().toString();
     private volatile HostFrame incoming;
     private volatile HostFrame desktop;
+    private volatile Wire.Frame projectiles;
+    private long projectilesWritten=-1;
     private volatile Wire.Frame view;
     private long viewWritten=-1;
     private volatile Wire.Frame outgoing;
@@ -43,6 +45,8 @@ public final class Bridge implements AutoCloseable {
             lastError="";
         } catch (IOException | IllegalArgumentException e) { lastError=e.toString(); }
         try {
+            Wire.Frame probes=projectiles;
+            if (probes!=null && probes.sequence()>projectilesWritten) { Wire.write(directory.resolve("projectiles.frame"),probes); projectilesWritten=probes.sequence(); }
             Wire.Frame v=view;
             if (v!=null && v.sequence()>viewWritten) { Wire.write(directory.resolve("control.frame"),v); viewWritten=v.sequence(); }
         } catch (IOException ignored) { }
@@ -62,6 +66,7 @@ public final class Bridge implements AutoCloseable {
         HostFrame f=desktop;
         return f!=null && System.nanoTime()-f.receivedNanos()<750_000_000L ? f : null;
     }
+    public void publishProjectiles(long sequence,List<String[]> rows) { projectiles=new Wire.Frame(session,sequence,List.copyOf(rows)); }
     public void publishView(long sequence,List<String[]> rows) { view=new Wire.Frame(session,sequence,List.copyOf(rows)); }
     public String session() { return session; }
     public String error() { return lastError; }

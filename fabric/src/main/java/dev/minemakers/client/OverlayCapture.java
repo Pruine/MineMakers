@@ -4,6 +4,7 @@ import com.mojang.blaze3d.systems.RenderSystem;
 import dev.minemakers.MineMakers;
 import dev.minemakers.bridge.Bridge;
 import dev.minemakers.bridge.FramePacer;
+import dev.minemakers.bridge.SharedOverlayWriter;
 import dev.minemakers.bridge.OverlayFrames;
 import dev.minemakers.bridge.OverlayFrames.Image;
 import java.util.Arrays;
@@ -21,7 +22,7 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.*;
 
-/** Exports vanilla hand + GUI pixels, not a mock inventory. Windows compositing stays out of process. */
+/** Exports vanilla world, hand and GUI pixels. Windows compositing stays out of process. */
 public final class OverlayCapture {
     private record Report(Path file,String text) {}
     private static final ScheduledExecutorService io=Executors.newSingleThreadScheduledExecutor(r -> {
@@ -32,6 +33,8 @@ public final class OverlayCapture {
     private static final AtomicLong written=new AtomicLong();
     private static volatile Report report;
     private static Report lastReport;
+    private static SharedOverlayWriter shared;
+    private static Path sharedPath;
     private static long measuredSince,rendered,captured,previousWritten;
     private static SimpleFramebuffer resized;
     private static ByteBuffer pixels;
@@ -58,7 +61,7 @@ public final class OverlayCapture {
     public static void clearWorld() {
         if (!enabled()) return;
         RenderSystem.clearColor(0,0,0,0);
-        RenderSystem.clear(GL11.GL_COLOR_BUFFER_BIT|GL11.GL_DEPTH_BUFFER_BIT,MinecraftClient.IS_SYSTEM_MAC);
+        // WorldRenderer performs its normal clear immediately after this hook.
     }
     public static void capture() {
         Bridge bridge=MineMakers.bridge;
@@ -70,7 +73,7 @@ public final class OverlayCapture {
             double seconds=(now-measuredSince)/1_000_000_000.0;
             long writes=written.get();
             report=new Report(bridge.directory().resolve("minemakers-client-status.txt"),String.format(java.util.Locale.ROOT,
-                "MineMakers 0.3.1 | overlay target: 60 FPS%nRender: %.1f FPS | captured: %.1f FPS | written: %.1f FPS%nCapture error: %s%n",
+                "MineMakers 0.4.0 | transport: shared mapping | overlay target: 60 FPS%nRender: %.1f FPS | captured: %.1f FPS | written: %.1f FPS%nCapture error: %s%n",
                 rendered/seconds,captured/seconds,(writes-previousWritten)/seconds,error.isEmpty()?"none":error));
             previousWritten=writes; measuredSince=now; rendered=0; captured=0;
         }
@@ -128,13 +131,15 @@ public final class OverlayCapture {
         }
         Image image=frames.take();
         if (image==null) return;
-        Path temp=image.file().resolveSibling("overlay.bgra.tmp");
         try {
-            Files.write(temp,image.bytes());
-            try { Files.move(temp,image.file(),StandardCopyOption.ATOMIC_MOVE,StandardCopyOption.REPLACE_EXISTING); }
-            catch (AtomicMoveNotSupportedException e) { Files.move(temp,image.file(),StandardCopyOption.REPLACE_EXISTING); }
+            Path path=image.file().resolveSibling("overlay.shared");
+            if (shared==null || !path.equals(sharedPath)) {
+                if (shared!=null) shared.close();
+                shared=new SharedOverlayWriter(path); sharedPath=path;
+            }
+            shared.publish(image.bytes());
             error=""; written.incrementAndGet();
-        } catch (IOException e) { failure(e); }
+        } catch (IOException | RuntimeException e) { failure(e); }
         finally { frames.release(image); }
     }
 }
