@@ -7,6 +7,17 @@ import time
 from pathlib import Path
 
 HEADER = struct.Struct('<4sIIIQQI64s')
+VIEW_HEADER = struct.Struct('<64sdddfff')
+
+@dataclass(frozen=True)
+class View:
+    session: str
+    x: float
+    y: float
+    z: float
+    yaw: float
+    pitch: float
+    fov: float
 
 @dataclass(frozen=True)
 class Overlay:
@@ -17,17 +28,28 @@ class Overlay:
     menu: bool
     session: str
     pixels: bytes
+    view: View | None = None
 
 def decode_overlay(data):
     if len(data) < HEADER.size: raise ValueError('Incomplete overlay header')
     magic, version, width, height, seq, ack, flags, session = HEADER.unpack_from(data)
-    if magic != b'MMOV' or version != 1 or not 1 <= width <= 1280 or not 1 <= height <= 720:
+    if magic != b'MMOV' or version not in (1, 2) or not 1 <= width <= 1280 or not 1 <= height <= 720:
         raise ValueError('Unsupported overlay frame')
-    if len(data) != HEADER.size + width * height * 4: raise ValueError('Incomplete overlay image')
+    offset = HEADER.size + (VIEW_HEADER.size if version == 2 else 0)
+    if len(data) != offset + width * height * 4: raise ValueError('Incomplete overlay image')
     session = session.split(b'\0', 1)[0].decode('ascii')
     if not session or len(session) > 64 or any(not (c.isalnum() or c in '_-') for c in session):
         raise ValueError('Invalid overlay session')
-    return Overlay(width, height, seq, ack, bool(flags & 1), session, data[HEADER.size:])
+    view = None
+    if version == 2:
+        import math
+        mc, x, y, z, yaw, pitch, fov = VIEW_HEADER.unpack_from(data, HEADER.size)
+        mc = mc.split(b'\0', 1)[0].decode('ascii')
+        if not mc or any(not (c.isalnum() or c in '_-') for c in mc): raise ValueError('Invalid view session')
+        if not all(math.isfinite(v) and abs(v) <= 30_000_000 for v in (x,y,z,yaw,pitch,fov)) or not 30 <= fov <= 110:
+            raise ValueError('Invalid rendered camera')
+        view = View(mc,x,y,z,yaw,pitch,fov)
+    return Overlay(width, height, seq, ack, bool(flags & 1), session, data[offset:], view)
 
 def encode_frame(session, seq, rows):
     if len(rows) > 8192: raise ValueError('Too many rows')
@@ -48,6 +70,8 @@ class InputQueue:
         self.held = set()
         self.x = self.y = 0.0
         self.cursor_x = self.cursor_y = 0.5
+        self.view = None
+        self.view_sequence = 0
     def reset(self):
         self.__init__()
     def event(self, kind, *args):
@@ -60,6 +84,9 @@ class InputQueue:
     def frame(self, active):
         self.sequence += 1
         rows = [['ACTIVE', int(active)], ['POINTER', self.x, self.y, self.cursor_x, self.cursor_y]]
+        if active and self.view is not None:
+            v=self.view
+            rows += [['VIEW',v.session,self.view_sequence,v.x,v.y,v.z,v.yaw,v.pitch,v.fov]]
         rows += [['HELD', k] for k in sorted(self.held)]
         rows += self.events
         return encode_frame(self.session, self.sequence, rows)
@@ -123,7 +150,7 @@ class TimerResolution:
 
 class OverlayMapping:
     """Read complete frames from Java's three-slot memory-mapped image transport."""
-    MAX_FRAME = 100 + 1280 * 720 * 4
+    MAX_FRAME = 200 + 1280 * 720 * 4
     STRIDE = 16 + ((MAX_FRAME + 7) & ~7)
     SIZE = 64 + 3 * STRIDE
 
@@ -134,7 +161,7 @@ class OverlayMapping:
             if os.fstat(self.file.fileno()).st_size != self.SIZE:
                 raise ValueError('Unsupported overlay mapping size')
             self.memory = mmap.mmap(self.file.fileno(), self.SIZE, access=mmap.ACCESS_READ)
-            if struct.unpack_from('<4sIII', self.memory) != (b'MMMF', 1, 3, self.MAX_FRAME):
+            if struct.unpack_from('<4sIII', self.memory) != (b'MMMF', 2, 3, self.MAX_FRAME):
                 self.memory.close()
                 raise ValueError('Unsupported overlay mapping header')
         except BaseException:

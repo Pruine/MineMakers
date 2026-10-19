@@ -73,8 +73,8 @@ public final class OverlayCapture {
             double seconds=(now-measuredSince)/1_000_000_000.0;
             long writes=written.get();
             report=new Report(bridge.directory().resolve("minemakers-client-status.txt"),String.format(java.util.Locale.ROOT,
-                "MineMakers 0.4.0 | transport: shared mapping | overlay target: 60 FPS%nRender: %.1f FPS | captured: %.1f FPS | written: %.1f FPS%nCapture error: %s%n",
-                rendered/seconds,captured/seconds,(writes-previousWritten)/seconds,error.isEmpty()?"none":error));
+                "MineMakers 0.4.1 | transport: shared mapping | overlay target: 60 FPS%nRender: %.1f FPS | captured: %.1f FPS | written: %.1f FPS%nCamera interpolation: %.1f ms | look: local render frame%nCapture error: %s%n",
+                rendered/seconds,captured/seconds,(writes-previousWritten)/seconds,HostMotionClient.delayMillis(),error.isEmpty()?"none":error));
             previousWritten=writes; measuredSince=now; rendered=0; captured=0;
         }
         if (!pacer.due(now)) return;
@@ -100,14 +100,20 @@ public final class OverlayCapture {
             GL11.glPixelStorei(GL11.GL_PACK_ALIGNMENT,1);
             pixels.clear();
             GL11.glReadPixels(0,0,w,h,GL12.GL_BGRA,GL11.GL_UNSIGNED_BYTE,pixels);
-            // 100-byte little-endian header; BGRA rows follow, bottom-up and premultiplied by GL blending.
-            buffer=frames.acquire(100+w*h*4);
-            Arrays.fill(buffer,36,100,(byte)0); // clear the previous session's padding
+            // 200-byte little-endian header with the exact rendered camera; BGRA rows follow, bottom-up and premultiplied by GL blending.
+            buffer=frames.acquire(200+w*h*4);
+            Arrays.fill(buffer,36,200,(byte)0); // clear the previous session's padding
             ByteBuffer data=ByteBuffer.wrap(buffer).order(ByteOrder.LITTLE_ENDIAN);
-            data.put(new byte[]{'M','M','O','V'}).putInt(1).putInt(w).putInt(h).putLong(++sequence)
+            data.put(new byte[]{'M','M','O','V'}).putInt(2).putInt(w).putInt(h).putLong(++sequence)
                 .putLong(DesktopController.ack()).putInt(mc.currentScreen!=null ? 1 : 0);
             byte[] session=DesktopController.session().getBytes(StandardCharsets.US_ASCII);
             data.put(session,0,Math.min(64,session.length)); data.position(100);
+            byte[] mcSession=bridge.session().getBytes(StandardCharsets.US_ASCII);
+            data.put(mcSession,0,Math.min(64,mcSession.length)); data.position(164);
+            var view=HostMotionClient.view();
+            if (view==null) { frames.release(new Image(bridge.directory().resolve("overlay.bgra"),buffer)); buffer=null; return; }
+            data.putDouble(view.x()).putDouble(view.y()+view.eyeHeight()).putDouble(view.z())
+                .putFloat(view.yaw()).putFloat(view.pitch()).putFloat((float)HostMotionClient.fov());
             data.put(pixels);
             frames.publish(new Image(bridge.directory().resolve("overlay.bgra"),buffer));
             buffer=null; captured++;

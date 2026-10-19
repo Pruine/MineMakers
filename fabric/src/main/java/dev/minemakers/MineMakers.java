@@ -46,7 +46,7 @@ public final class MineMakers implements ModInitializer {
     private static final net.minecraft.registry.RegistryKey<net.minecraft.world.World> HOST_WORLD=
         net.minecraft.registry.RegistryKey.of(net.minecraft.registry.RegistryKeys.WORLD,net.minecraft.util.Identifier.of("minemakers","trailmakers"));
     public static boolean isHostPlayer(Entity entity) {
-        return bridge!=null && playerId!=null && playerId.equals(entity.getUuid());
+        return entity!=null && bridge!=null && playerId!=null && playerId.equals(entity.getUuid());
     }
     public static boolean isHostWorld(net.minecraft.world.World world) { return bridge!=null && world.getRegistryKey().equals(HOST_WORLD); }
     public static boolean isHostTarget(Entity entity) { return bridge!=null && targetIds.containsKey(entity.getUuid()); }

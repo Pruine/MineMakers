@@ -8,10 +8,10 @@ root = Path(__file__).resolve().parents[1]
 p = argparse.ArgumentParser()
 p.add_argument('--source-only', action='store_true', help='Explicitly produce an uncompiled developer bundle')
 args = p.parse_args()
-jar = root / 'fabric/build/libs/minemakers-fabric-0.4.0.jar'
+jar = root / 'fabric/build/libs/minemakers-fabric-0.4.1.jar'
 if not args.source_only and not jar.is_file():
     p.error('Build fabric/gradlew build first; or explicitly select --source-only. No playable release has been built.')
-out = root / 'dist' / ('MineMakers-source-0.4.0.zip' if args.source_only else 'MineMakers-experimental-0.4.0.zip')
+out = root / 'dist' / ('MineMakers-source-0.4.1.zip' if args.source_only else 'MineMakers-experimental-0.4.1.zip')
 out.parent.mkdir(exist_ok=True)
 with ZipFile(out, 'w', ZIP_DEFLATED) as z:
     for path in sorted((root/'mod').rglob('*')):

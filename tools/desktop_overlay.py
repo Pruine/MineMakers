@@ -12,6 +12,7 @@ from pathlib import Path
 import struct
 import sys
 import time
+from desktop_runtime import InputPump, ImagePump
 from desktop_protocol import InputQueue, decode_overlay, resolve_directory, FrameWriter, TimerResolution, OverlayMapping
 
 
@@ -56,6 +57,8 @@ def run(directory, title):
     api(user,'RegisterRawInputDevices',w.BOOL,[c.POINTER(RID),w.UINT,w.UINT])
     api(user,'GetRawInputData',w.UINT,[w.HANDLE,w.UINT,c.c_void_p,c.POINTER(w.UINT),w.UINT])
     api(user,'UpdateLayeredWindow',w.BOOL,[w.HWND,w.HDC,c.POINTER(w.POINT),c.POINTER(SIZE),w.HDC,c.POINTER(w.POINT),w.DWORD,c.POINTER(BLEND),w.DWORD])
+    api(user,'PostMessageW',w.BOOL,[w.HWND,w.UINT,w.WPARAM,w.LPARAM])
+    api(user,'ShowWindowAsync',w.BOOL,[w.HWND,c.c_int])
     api(user,'ShowWindow',w.BOOL,[w.HWND,c.c_int]); api(user,'DestroyWindow',w.BOOL,[w.HWND])
     api(user,'SetTimer',c.c_size_t,[w.HWND,c.c_size_t,w.UINT,c.c_void_p])
     api(user,'KillTimer',w.BOOL,[w.HWND,c.c_size_t])
@@ -86,11 +89,12 @@ def run(directory, title):
         kernel.CloseHandle(mutex)
         raise SystemExit('An overlay helper is already running for this folder. Close that helper window before starting another.')
     writer=FrameWriter(directory)
+    input_pump=InputPump(writer)
+    image_pump=None
     state={'armed':False,'capture':False,'target':None,'rect':None,'frame':None,'fresh':-100.0,
            'mtime':None,'raw_seq':None,'failed':False,'vkeys':set(),'bitmap':None,'old':None,'bits':None,'size':None,'write_warning':False,'last_draw':None,'mapping':None}
     statistics=dict(since=time.monotonic(),polls=0,reads=0,presents=0,inputs=0,read_time=0.0,draw_time=0.0)
-    dc=user.GetDC(None); mem=gdi.CreateCompatibleDC(dc)
-    if not dc or not mem: raise OSError('Cannot create overlay device context')
+    dc=mem=None # allocated, used and freed by the compositor thread
     def foreground():
         hwnd=user.GetForegroundWindow(); buf=c.create_unicode_buffer(512)
         user.GetWindowTextW(hwnd,buf,len(buf))
@@ -102,20 +106,20 @@ def run(directory, title):
         resolution.set(False)
         state['capture']=False; q.reset(); state['vkeys'].clear()
         state['frame']=None; state['fresh']=-100.0; state['raw_seq']=None
+        if image_pump is not None: image_pump.submit(False,q.session,None,(.5,.5))
+        input_pump.submit(q.frame(False))
     def emit(kind,*args):
         try: q.event(kind,*args)
         except BufferError as e:
             release(); state['armed']=False; print(str(e),flush=True)
-    def write(active):
-        success=writer.publish(q.frame(active))
-        if success:
-            if state['write_warning']: print('Frame writing recovered.',flush=True)
-            state['write_warning']=False
-        elif writer.blocked_for>=2 and not state['write_warning']:
-            print('Still waiting to replace '+str(writer.destination)+'. A reader may be holding it open, or it may be read-only. Close other helper instances; if this persists, check this file\'s permissions. No administrator elevation is required by the helper.',file=sys.stderr,flush=True)
-            state['write_warning']=True
-        return success
-    def render(frame,rect):
+    def send_input():
+        input_pump.submit(q.frame(bool(state['armed'] and state['rect'])))
+    def render(frame,request):
+        nonlocal dc,mem
+        if dc is None:
+            dc=user.GetDC(None); mem=gdi.CreateCompatibleDC(dc)
+            if not dc or not mem: raise OSError('Cannot create overlay device context')
+        active,session,rect,cursor_x,cursor_y=request
         left,top,width,height=rect
         if state['size']!=(width,height):
             if state['bitmap']:
@@ -132,16 +136,32 @@ def run(directory, title):
         if frame.menu:
             # Cursor is virtual; raw mouse works even if Trailmakers locks the OS cursor.
             colors=c.cast(state['bits'],c.POINTER(c.c_uint32))
-            px=int(q.cursor_x*width); py=int(q.cursor_y*height)
+            px=int(cursor_x*width); py=int(cursor_y*height)
             for y in range(17):
                 for x in range(min(11,y//2+1)):
                     xx,yy=px+x,py+y
                     if 0<=xx<width and 0<=yy<height:
                         colors[(height-1-yy)*width+xx]=0xFF101010 if x==0 or x==y//2 or y==16 else 0xFFFFFFFF
         blend=BLEND(0,0,255,1); at=w.POINT(left,top); zero=w.POINT(0,0); size=SIZE(width,height)
+        if image_pump.request[:3]!=request[:3]: return False
         if not user.UpdateLayeredWindow(hwnd,dc,c.byref(at),c.byref(size),mem,c.byref(zero),0,c.byref(blend),2):
             raise OSError('UpdateLayeredWindow failed; use windowed/borderless Trailmakers')
-        user.ShowWindow(hwnd,4) # SW_SHOWNOACTIVATE
+        user.ShowWindowAsync(hwnd,4) # SW_SHOWNOACTIVATE
+        return True
+    image_state={'mapping':None,'mtime':None}
+    def read_image():
+        if image_state['mapping'] is None and (directory/'overlay.shared').is_file():
+            image_state['mapping']=OverlayMapping(directory/'overlay.shared')
+        if image_state['mapping'] is not None: return image_state['mapping'].read()
+        path=directory/'overlay.bgra'; st=path.stat()
+        if st.st_size>4*1280*720+200: raise ValueError('Oversized overlay')
+        if st.st_mtime_ns!=image_state['mtime']:
+            frame=decode_overlay(path.read_bytes()); image_state['mtime']=st.st_mtime_ns; return frame
+    def close_images():
+        if image_state['mapping'] is not None: image_state['mapping'].close()
+        if state['bitmap']: gdi.SelectObject(mem,state['old']); gdi.DeleteObject(state['bitmap'])
+        if mem: gdi.DeleteDC(mem)
+        if dc: user.ReleaseDC(None,dc)
     def pulse():
         statistics['polls']+=1
         target=foreground(); state['target']=target
@@ -152,49 +172,38 @@ def run(directory, title):
             if user.GetClientRect(target,c.byref(r)) and user.ClientToScreen(target,c.byref(origin)):
                 if 1<=r.right<=7680 and 1<=r.bottom<=4320: rect=(origin.x,origin.y,r.right,r.bottom)
         state['rect']=rect
-        read_started=time.monotonic()
-        try:
-            if state['mapping'] is None and (directory/'overlay.shared').is_file():
-                state['mapping']=OverlayMapping(directory/'overlay.shared')
-            frame=None
-            if state['mapping'] is not None:
-                frame=state['mapping'].read()
-            else: # compatibility with older JARs, while waiting for the new mapping
-                path=directory/'overlay.bgra'; st=path.stat()
-                if st.st_size>4*1280*720+100: raise ValueError('Oversized overlay')
-                if st.st_mtime_ns!=state['mtime']:
-                    frame=decode_overlay(path.read_bytes()); state['mtime']=st.st_mtime_ns
-            if frame is not None and frame.session==q.session and (frame.session,frame.sequence)!=state['raw_seq']:
-                statistics['reads']+=1
-                state['frame']=frame; state['raw_seq']=(frame.session,frame.sequence); state['fresh']=time.monotonic(); q.acknowledge(frame)
-        except (OSError,ValueError,UnicodeError): pass
-        statistics['read_time']+=time.monotonic()-read_started
+        latest=image_pump.latest
+        if latest is not None:
+            frame,received=latest
+            if frame.session==q.session and (frame.session,frame.sequence)!=state['raw_seq']:
+                state['frame']=frame; state['raw_seq']=(frame.session,frame.sequence); state['fresh']=received; q.acknowledge(frame)
+        displayed=image_pump.displayed
+        if displayed is not None and displayed[0].session==q.session:
+            q.view=displayed[0].view; q.view_sequence=displayed[0].sequence
         fresh=time.monotonic()-state['fresh']<1.5
         capture=bool(state['armed'] and rect and fresh)
         if not capture and state['capture']:
             release(); state['armed']=False
-        state['capture']=capture
-        # ACTIVE is sent while arming so Minecraft can generate the very first overlay.
-        if write(bool(state['armed'] and rect)): statistics['inputs']+=1
-        if capture:
-            frame=state['frame']
-            draw_key=(frame.session,frame.sequence,rect,q.cursor_x if frame.menu else 0,q.cursor_y if frame.menu else 0)
-            if draw_key!=state['last_draw']:
-                draw_started=time.monotonic()
-                render(frame,rect); state['last_draw']=draw_key
-                statistics['presents']+=1; statistics['draw_time']+=time.monotonic()-draw_started
-            user.SetCursorPos(rect[0]+rect[2]//2,rect[1]+rect[3]//2)
-        else:
-            user.ShowWindow(hwnd,0); state['last_draw']=None
+        if image_pump.error:
+            release(); state['armed']=False
+            if not state['failed']: print('Overlay stopped: '+image_pump.error,file=sys.stderr,flush=True); state['failed']=True
+        state['capture']=capture and not image_pump.error
+        image_pump.submit(state['capture'],q.session,rect,(q.cursor_x,q.cursor_y))
+        send_input()
+        if state['capture']: user.SetCursorPos(rect[0]+rect[2]//2,rect[1]+rect[3]//2)
+        if writer.blocked_for>=2 and not state['write_warning']:
+            print('Input file is locked; retrying independently of rendering. Close any older helper instance.',file=sys.stderr,flush=True); state['write_warning']=True
+        elif writer.last_error is None: state['write_warning']=False
         now=time.monotonic(); elapsed=now-statistics['since']
         if elapsed>=1:
-            info=('MineMakers 0.4.0 | capture: '+str(capture)+' | transport: '+('shared mapping' if state['mapping'] else 'legacy file')+'\n'
-                +f"Read: {statistics['reads']/elapsed:.1f} FPS | presented: {statistics['presents']/elapsed:.1f} FPS | input: {statistics['inputs']/elapsed:.1f} FPS\n"
-                +f"Average read/poll: {1000*statistics['read_time']/max(1,statistics['polls']):.2f} ms | compose: {1000*statistics['draw_time']/max(1,statistics['presents']):.2f} ms\n")
-            try:
-                temp=directory/'minemakers-overlay-status.txt.tmp'; temp.write_text(info,encoding='utf-8'); os.replace(temp,directory/'minemakers-overlay-status.txt')
-            except OSError: pass
-            statistics.update(since=now,polls=0,reads=0,presents=0,inputs=0,read_time=0.0,draw_time=0.0)
+            reads=image_pump.reads-statistics['reads']; presents=image_pump.presents-statistics['presents']; inputs=input_pump.count-statistics['inputs']
+            read_time=image_pump.read_time-statistics['read_time']; draw_time=image_pump.draw_time-statistics['draw_time']
+            info=('MineMakers 0.4.1 | capture: '+str(state['capture'])+' | independent input/compositor workers\n'
+                +f"Read: {reads/elapsed:.1f} FPS | presented: {presents/elapsed:.1f} FPS | input: {inputs/elapsed:.1f} FPS\n"
+                +f"Average read: {1000*read_time/max(1,reads):.2f} ms | compose: {1000*draw_time/max(1,presents):.2f} ms\n"
+                +'Native camera follows the presented Minecraft view | input error: '+str(input_pump.error or 'none')+'\n')
+            image_pump.report=(directory/'minemakers-overlay-status.txt',info)
+            statistics.update(since=now,polls=0,reads=image_pump.reads,presents=image_pump.presents,inputs=input_pump.count,read_time=image_pump.read_time,draw_time=image_pump.draw_time)
     VK={0x08:259,0x09:258,0x0D:257,0x1B:256,0x20:32,0x21:266,0x22:267,0x23:269,0x24:268,
         0x25:263,0x26:265,0x27:262,0x28:264,0x2D:260,0x2E:261,0xA0:340,0xA1:344,
         0xA2:341,0xA3:345,0xA4:342,0xA5:346,0x10:340,0x11:341,0x12:342,
@@ -245,6 +254,7 @@ def run(directory, title):
                         else: q.held.discard(key)
                         emit('KEY',key,(2 if repeat else 1) if down else 0,modifiers())
                         if down: characters(k)
+                        send_input()
                     return 1
         return user.CallNextHookEx(None,code,msg,data)
     @HOOKPROC
@@ -253,9 +263,9 @@ def run(directory, title):
             m=c.cast(data,c.POINTER(MOUSE)).contents
             buttons={0x201:(0,1),0x202:(0,0),0x204:(1,1),0x205:(1,0),0x207:(2,1),0x208:(2,0)}
             if msg in buttons:
-                button,action=buttons[msg]; emit('BUTTON',button,action,modifiers(),q.cursor_x,q.cursor_y); return 1
+                button,action=buttons[msg]; emit('BUTTON',button,action,modifiers(),q.cursor_x,q.cursor_y); send_input(); return 1
             if msg==0x20A:
-                emit('SCROLL',c.c_short(m.data>>16).value/120); return 1
+                emit('SCROLL',c.c_short(m.data>>16).value/120); send_input(); return 1
         return user.CallNextHookEx(None,code,msg,data)
     @WNDPROC
     def procedure(handle,msg,wp,lp):
@@ -273,7 +283,8 @@ def run(directory, title):
                             if frame and frame.menu and rect:
                                 q.cursor_x=max(0,min(1,q.cursor_x+dx/rect[2])); q.cursor_y=max(0,min(1,q.cursor_y+dy/rect[3]))
                             else: q.x+=dx; q.y+=dy
-            elif msg==0x113: pulse()
+                            send_input()
+            elif msg in (0x113,0x8001): pulse()
             elif msg==0x2: user.PostQuitMessage(0)
         except Exception as e:
             release(); state['armed']=False
@@ -288,7 +299,8 @@ def run(directory, title):
     if not user.RegisterRawInputDevices(c.byref(device),1,c.sizeof(RID)): raise OSError('Cannot register raw mouse input')
     kh=user.SetWindowsHookExW(13,keyboard_hook,instance,0); mh=user.SetWindowsHookExW(14,mouse_hook,instance,0)
     if not kh or not mh: raise OSError('Cannot install game input hooks')
-    user.SetTimer(hwnd,1,16,None)
+    image_pump=ImagePump(read_image,render,lambda: user.ShowWindowAsync(hwnd,0),close_images,lambda: user.PostMessageW(hwnd,0x8001,0,0))
+    user.SetTimer(hwnd,1,10,None)
     print('Focus Trailmakers and press F8. Press F8 again to release. Ctrl+C closes this helper.',flush=True)
     try:
         message=w.MSG()
@@ -296,13 +308,11 @@ def run(directory, title):
             user.TranslateMessage(c.byref(message)); user.DispatchMessageW(c.byref(message))
     finally:
         release()
-        try: write(False)
-        except OSError: pass
-        if state['mapping'] is not None: state['mapping'].close()
-        writer.close(); kernel.CloseHandle(mutex)
+        input_pump.close(q.frame(False))
+        image_pump.close()
+        kernel.CloseHandle(mutex)
         user.UnhookWindowsHookEx(kh); user.UnhookWindowsHookEx(mh); user.KillTimer(hwnd,1)
-        if state['bitmap']: gdi.SelectObject(mem,state['old']); gdi.DeleteObject(state['bitmap'])
-        gdi.DeleteDC(mem); user.ReleaseDC(None,dc); user.DestroyWindow(hwnd)
+        user.DestroyWindow(hwnd)
 
 if __name__=='__main__':
     p=argparse.ArgumentParser(description=__doc__)

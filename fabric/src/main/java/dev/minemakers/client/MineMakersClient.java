@@ -22,6 +22,7 @@ public final class MineMakersClient implements ClientModInitializer {
         MinecraftClient mc=MinecraftClient.getInstance();
         DesktopController.tick(mc,MineMakers.bridge);
         OverlayCapture.tick(mc);
+        HostMotionClient.beginFrame(mc);
         ViewStream.publish();
     }
     private void key(KeyBinding key,boolean down) {

@@ -75,13 +75,16 @@ public final class ProtocolTest {
             var lua=Wire.read(dir.resolve("lua.frame")); check(lua.session().equals("lua_test")); check(lua.records().size()==2);
         }
         var input=DesktopInput.parse(new Wire.Frame("desktop",1,List.of(
-            new String[]{"ACTIVE","1"},new String[]{"POINTER","25","-8","0.5","0.25"},new String[]{"HELD","340"},
+            new String[]{"ACTIVE","1"},new String[]{"VIEW","mc_session","12","2","3","4","30","15","60"},new String[]{"POINTER","25","-8","0.5","0.25"},new String[]{"HELD","340"},
             new String[]{"EVENT","2","BUTTON","0","1","1","0.5","0.25"},new String[]{"EVENT","1","KEY","69","1","0"})));
         check(input.active() && input.totalX()==25 && input.totalY()==-8 && input.held().contains(340));
         check(input.events().getFirst().id()==1 && input.events().getLast().type().equals("BUTTON"));
         boolean badDesktop=false;
         try { DesktopInput.parse(new Wire.Frame("d",1,List.<String[]>of(new String[]{"POINTER","0","0","-0.2","0.5"}))); }
         catch (IllegalArgumentException e) { badDesktop=true; } check(badDesktop);
+        boolean badView=false;
+        try { DesktopInput.parse(new Wire.Frame("d",1,List.<String[]>of(new String[]{"VIEW","mc_session","12","2","3","4","30","15","999"}))); }
+        catch (IllegalArgumentException e) { badView=true; } check(badView);
         System.out.println(checks+" Java protocol/damage checks passed");
     }
 }

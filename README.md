@@ -3,7 +3,7 @@
 An **experimental Minecraft: Java Edition ↔ Trailmakers bridge**, inspired by
 [SkyCraft](https://github.com/chasmlol/SkyCraft). Minecraft runs alongside Trailmakers
 and owns inventory, combat rules, armor, blocks, TNT, ender pearls and game modes.
-Trailmakers owns the linked player’s movement, collisions and first-person camera.
+Trailmakers resolves movement/collisions. Both world layers use the same first-person view.
 
 **This is a compiled development prototype, not a finished playable crossover.**
 Version 0.4 renders the real Minecraft blocks, selection outlines, break cracks,
@@ -14,9 +14,14 @@ native collision cubes. Windows composition and both games together still need
 local validation. Native incoming weapon damage and custom auto-aim require engine
 work. There is no native Trailmakers plugin in this release.
 
+0.4.1 fixes the camera pipeline separately from image delivery: host positions are
+interpolated, mouse look is sampled locally each render, and Trailmakers follows
+the camera pose of the presented Minecraft image. Input/file delivery and image
+composition use separate workers. Native physics remains authoritative.
+
 ## Download
 
-[Download the experimental prototype ZIP](https://github.com/Pruine/MineMakers/raw/refs/heads/main/downloads/MineMakers-experimental-0.4.0.zip).
+[Download the experimental prototype ZIP](https://github.com/Pruine/MineMakers/raw/refs/heads/main/downloads/MineMakers-experimental-0.4.1.zip).
 
 Extract the whole ZIP and open **`START-HERE.txt`**. Double-click
 **`Start-MineMakers-Overlay.cmd`** to run the UI helper. Paste the existing game
@@ -38,7 +43,7 @@ instructions. The limitations above still apply; this is not a finished crossove
 - Experimental Windows overlay/input helper: real Minecraft world geometry, selection outlines, break cracks, projectiles, hand, held item,
   crosshair, hotbar, inventory and menus, with mouse look, click/scroll, typing and
   modifier forwarding. Requires Python 3.10+ and borderless/windowed Trailmakers.
-  Press F8 to capture/release while Trailmakers is focused. See [upgrade steps](docs/UPGRADE-0.4.md).
+  Press F8 to capture/release while Trailmakers is focused. See [upgrade steps](docs/UPGRADE-0.4.1.md).
 - Focusing Minecraft now preserves native Minecraft controls instead of forcing
   its view and hotbar back to the Trailmakers snapshot.
 - Vanilla wooden, stone, iron, golden, diamond and netherite swords; bow/arrows;
@@ -94,7 +99,7 @@ python3 tools/package.py
 ```
 
 Windows: use `gradlew.bat` and `.tools\test-venv\Scripts\python.exe` as appropriate.
-The remapped mod is `fabric/build/libs/minemakers-fabric-0.4.0.jar`. The package tool
+The remapped mod is `fabric/build/libs/minemakers-fabric-0.4.1.jar`. The package tool
 requires that JAR; `--source-only` explicitly creates a developer source bundle.
 Do not mistake the `-sources.jar` for an installable mod.
 

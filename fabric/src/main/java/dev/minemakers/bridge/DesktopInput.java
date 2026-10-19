@@ -16,6 +16,11 @@ public record DesktopInput(String session, long sequence, boolean active, double
                 if (cx<0 || cx>1 || cy<0 || cy>1) throw new IllegalArgumentException("Cursor out of bounds");
             } else if (r.length==2 && r[0].equals("HELD")) {
                 int key=Integer.parseInt(r[1]); if (key<0 || key>348) throw new IllegalArgumentException("Bad key"); held.add(key);
+            } else if (r.length==9 && r[0].equals("VIEW")) {
+                // Presentation feedback is consumed by Lua, but shares this input envelope.
+                if (!r[1].matches("[A-Za-z0-9_-]{1,64}") || Long.parseLong(r[2])<0) throw new IllegalArgumentException("Bad view session/sequence");
+                for (int i=3;i<9;i++) Wire.number(r[i]);
+                if (Wire.number(r[7])< -90 || Wire.number(r[7])>90 || Wire.number(r[8])<30 || Wire.number(r[8])>110) throw new IllegalArgumentException("Bad view projection");
             } else if (r.length>=4 && r[0].equals("EVENT")) {
                 long id=Long.parseLong(r[1]);
                 String type=r[2]; int expected=switch(type) { case "KEY" -> 6; case "CHAR","SCROLL" -> 4; case "BUTTON" -> 8; default -> 0; };

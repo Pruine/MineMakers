@@ -9,7 +9,7 @@ import java.nio.file.*;
 
 /** Three committed image slots. Readers never wait on per-frame file replacement or flush. */
 public final class SharedOverlayWriter implements AutoCloseable {
-    public static final int MAX_FRAME=100+1280*720*4;
+    public static final int MAX_FRAME=200+1280*720*4;
     public static final int SLOTS=3,STRIDE=16+((MAX_FRAME+7)&~7),SIZE=64+SLOTS*STRIDE;
     private static final VarHandle LONG=MethodHandles.byteBufferViewVarHandle(long[].class,ByteOrder.LITTLE_ENDIAN);
     private final FileChannel channel;
@@ -21,10 +21,10 @@ public final class SharedOverlayWriter implements AutoCloseable {
         memory.order(ByteOrder.LITTLE_ENDIAN);
         // Preserve the epoch across producer restarts while a reader still maps this file.
         long previous=(long)LONG.getVolatile(memory,16);
-        if (memory.getInt(0)==0x464d4d4d && memory.getInt(4)==1 && previous>0 && previous<Long.MAX_VALUE/8) sequence=previous>>>2;
+        if (memory.getInt(0)==0x464d4d4d && memory.getInt(4)==2 && previous>0 && previous<Long.MAX_VALUE/8) sequence=previous>>>2;
         LONG.setVolatile(memory,16,0L);
         memory.put(0,(byte)'M').put(1,(byte)'M').put(2,(byte)'M').put(3,(byte)'F');
-        memory.putInt(4,1).putInt(8,SLOTS).putInt(12,MAX_FRAME);
+        memory.putInt(4,2).putInt(8,SLOTS).putInt(12,MAX_FRAME);
         for (int i=0;i<SLOTS;i++) LONG.setVolatile(memory,64+i*STRIDE,0L);
     }
     public void publish(byte[] frame) {

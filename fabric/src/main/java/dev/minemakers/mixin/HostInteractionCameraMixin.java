@@ -15,14 +15,14 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 public abstract class HostInteractionCameraMixin {
     @Inject(method="getCameraPosVec",at=@At("RETURN"),cancellable=true)
     private void minemakers$eye(float delta,CallbackInfoReturnable<Vec3d> cir) {
-        if ((Object)this==MinecraftClient.getInstance().player && OverlayCapture.enabled()) {
+        if ((Object)this==MinecraftClient.getInstance().player && HostMotionClient.rendering()) {
             var eye=HostMotionClient.eye(); if (eye!=null) cir.setReturnValue(eye);
         }
     }
     @Inject(method="getRotationVec",at=@At("RETURN"),cancellable=true)
     private void minemakers$look(float delta,CallbackInfoReturnable<Vec3d> cir) {
-        if ((Object)this==MinecraftClient.getInstance().player && OverlayCapture.enabled()) {
-            var p=HostMotionClient.pose();
+        if ((Object)this==MinecraftClient.getInstance().player && HostMotionClient.rendering()) {
+            var p=HostMotionClient.view();
             if (p!=null) { double yaw=Math.toRadians(p.yaw()),pitch=Math.toRadians(p.pitch());
                 cir.setReturnValue(new Vec3d(-Math.sin(yaw)*Math.cos(pitch),-Math.sin(pitch),Math.cos(yaw)*Math.cos(pitch))); }
         }

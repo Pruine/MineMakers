@@ -277,3 +277,37 @@ Client status reports render/capture/mapping-write FPS. The Windows helper repor
 read/present/input FPS and average copy/composition duration separately in
 `minemakers-overlay-status.txt`. A slow compositor can therefore be distinguished
 from a slow game renderer or transport.
+
+## 0.4.1 render-time camera synchronization
+
+Raw physics remains `HOST_POSE`. `POSE_CLOCK hostSeconds teleportEpoch` timestamps
+that pose at the native integration time. `PoseTimeline` keeps a bounded history,
+aligns the host clock using minimum observed arrival offset, and samples at an
+adaptive 25–100 ms delay. It interpolates between samples and holds the final pose
+on a stall; it never extrapolates through native geometry. Teleports, large jumps,
+clock reversals, long gaps and session changes reset history. Client ticks still
+copy authoritative feet for interactions; only the render view is interpolated.
+The render view is cached once per GameRenderer frame. Its yaw/pitch come from
+local mouse handling, not a host echo.
+
+The version-2 MMOV image retains its original 100-byte prefix, with version=2,
+then `<64sdddfff>`: Minecraft bridge session, relative camera-eye X/Y/Z, yaw,
+pitch and vertical FOV. Pixels start at byte 200. The MMMF mapping header version
+is now 2; maximum payload is 200+1280*720*4. Stride remains 16 plus the maximum
+payload rounded up to an 8-byte boundary, with the same three-slot epoch protocol.
+
+After the image worker successfully presents a frame, the input thread sends
+`VIEW mcSession imageSequence eyeX eyeY eyeZ yaw pitch fov` in desktop.frame.
+Lua accepts only the current Minecraft/desktop sessions and active capture.
+The custom camera follows that displayed pose, while the hidden player body and
+HOST_POSE continue to follow native collision physics. This avoids two independent
+camera clocks dragging visible blocks around. F8 release restores the direct
+native view path.
+
+The Win32 thread handles raw input/hooks and lightweight state changes only.
+InputPump writes the latest immutable input snapshot on its own bounded-rate
+worker. ImagePump owns its mapping and GDI resources on a separate thread, drops
+obsolete images, and posts a lightweight message after presentation. Thus GDI,
+image copying and disk I/O do not block the input message pump. The metadata is
+only echoed for a successfully presented image, never merely an acquired image.
+The image/metadata change requires all three components to be upgraded together.

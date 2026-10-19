@@ -8,7 +8,8 @@ import tempfile
 import unittest
 from unittest.mock import patch
 import struct
-from desktop_protocol import HEADER, InputQueue, decode_overlay, resolve_directory, FrameWriter, TimerResolution, OverlayMapping
+from desktop_runtime import InputPump, ImagePump
+from desktop_protocol import VIEW_HEADER, View, Overlay, HEADER, InputQueue, decode_overlay, resolve_directory, FrameWriter, TimerResolution, OverlayMapping
 from lupa.lua52 import LuaRuntime
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -32,6 +33,7 @@ class Tests(unittest.TestCase):
     def test_native_adapter(self):
         self.lua.globals().TEST_ROOT = str(ROOT)
         self.lua.execute((ROOT/'tests/fake_trailmakers.lua').read_text())
+        self.lua.execute("local schedule=tm.os.SetModTargetDeltaTime; tm.os.SetModTargetDeltaTime=function(dt) if dt<=0 then error('legacy timer minimum') end schedule(dt) end")
         self.lua.execute((ROOT/'mod/main.lua').read_text())
         test = self.lua.globals().TEST
         test.legacyCamera=True # exercise older AddCamera(player, position, direction) overload
@@ -185,6 +187,67 @@ class Tests(unittest.TestCase):
         self.assertEqual(len(hits),1,'A repeated probe must not queue the impact twice')
         self.assertFalse(any(v.alive for _,v in test.spawns.items()),'Minecraft renders projectiles; no native visual proxy')
 
+    def test_native_camera_follows_the_presented_view(self):
+        test,host=self.start_adapter();self.send_player(test,host)
+        self.assertEqual(test.updateInterval,0,'Request every engine frame, avoiding the 1/60 scheduling gate')
+        controls=[['CONTROL',1,0,0,0,0,0,1,90,0,1.62,0,0],['DESKTOP_LOOK','desktop_test',0,0,.15,.15],['KEYMAP','forward',87],['KEYMAP','back',83]]
+        test.files['control.frame']=self.wire.encode('mc_test',1,self.rows(controls))
+        rows=[['ACTIVE',1],['POINTER',0,0,.5,.5],['HELD',87],['VIEW','mc_test',5,2,3,4,30,15,60]]
+        test.files['desktop.frame']=self.wire.encode('desktop_test',1,self.rows(rows))
+        test.time=.62;self.lua.globals().update()
+        self.assertAlmostEqual(test.cameraPosition.x,-2)
+        self.assertAlmostEqual(test.cameraPosition.y,8)
+        self.assertAlmostEqual(test.cameraPosition.z,4)
+        self.assertAlmostEqual(test.cameraDirection.x,.5*0.9659258262890683)
+        for seq in range(2,8):
+            test.files['desktop.frame']=self.wire.encode('desktop_test',seq,self.rows(rows))
+            test.time+=1/120;self.lua.globals().update()
+        self.assertAlmostEqual(test.cameraPosition.x,-2,'Physics/input cannot override the pose of the displayed image')
+        host_pose=[r for _,r in self.wire.decode(test.files['trailmakers.frame']).records.items() if r[1]=='HOST_POSE'][0]
+        self.assertLess(float(host_pose[2]),0,'Native physics still advances independently of the displayed camera')
+        rows[-1]=['VIEW','wrong_mc_session',6,99,99,99,30,0,60]
+        test.files['desktop.frame']=self.wire.encode('desktop_test',8,self.rows(rows));test.time+=.02;self.lua.globals().update()
+        self.assertLess(abs(test.cameraPosition.x),2,'A stale Minecraft view must not take camera control')
+        rows[-1]=['VIEW','mc_test',7,2,3,4,30,15,60]
+        test.files['desktop.frame']=self.wire.encode('desktop_test',9,self.rows(rows));test.time+=.02;self.lua.globals().update()
+        self.assertAlmostEqual(test.cameraPosition.x,-2)
+        test.files['control.frame']=self.wire.encode('mc_test',2,self.rows([controls[0]]))
+        test.time+=.02;self.lua.globals().update()
+        self.assertLess(abs(test.cameraPosition.x),2,'F8 release must clear the presented-camera override')
+
+    def test_input_delivery_continues_during_blocked_composition(self):
+        import threading,time
+        entered=threading.Event();release=threading.Event();written=[]
+        class Writer:
+            def publish(self,text): written.append(text);return True
+            def close(self): pass
+        queue=InputQueue();frame=Overlay(1,1,1,0,False,queue.session,bytes(4))
+        def present(frame,request): entered.set();release.wait(2);return True
+        images=ImagePump(lambda:frame,present,lambda:None,lambda:None)
+        writer=InputPump(Writer())
+        try:
+            images.submit(True,queue.session,(0,0,1,1),(.5,.5))
+            self.assertTrue(entered.wait(1),'Compositor must be blocked before checking input independence')
+            for i in range(25):
+                queue.x=i;writer.submit(queue.frame(True));time.sleep(.005)
+            self.assertGreater(len(written),5,'Slow image composition must not hold up keyboard/mouse delivery')
+            self.assertIn('POINTER\t',written[-1])
+            release.set()
+        finally:
+            release.set();images.close();writer.close(queue.frame(False))
+        self.assertIn('ACTIVE\t0',written[-1],'Shutdown must publish capture release')
+
+    def test_overlay_camera_metadata_is_echoed_only_when_active(self):
+        queue=InputQueue()
+        raw=HEADER.pack(b'MMOV',2,1,1,12,0,0,queue.session.encode())+VIEW_HEADER.pack(b'mc_test',2,3,4,30,15,60)+bytes(4)
+        frame=decode_overlay(raw)
+        self.assertEqual(frame.view,View('mc_test',2,3,4,30,15,60))
+        queue.view=frame.view;queue.view_sequence=frame.sequence
+        self.assertIn('VIEW\tmc_test\t12',queue.frame(True))
+        self.assertNotIn('VIEW\t',queue.frame(False))
+        for cut in (100,164,199,203):
+            with self.assertRaises(ValueError):decode_overlay(raw[:cut])
+
     def test_windows_capture_timer_is_balanced(self):
         calls=[]
         timer=TimerResolution(lambda ms: calls.append(('begin',ms)) or 0,lambda ms: calls.append(('end',ms)) or 0)
@@ -267,9 +330,10 @@ class Tests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             d=Path(directory)
             (d/'lua.frame').write_text(self.wire.encode('lua_test',1,self.rows([['ACK',1],['LINK','session_1']])))
-            files=[ROOT/'fabric/src/main/java/dev/minemakers/bridge'/f for f in ('Wire.java','BlockDamage.java','DesktopInput.java','HostPose.java','FramePacer.java','OverlayFrames.java','SharedOverlayWriter.java')]
-            subprocess.run([javac,'--release','21','-d',str(d),*[str(p) for p in files],str(ROOT/'tests/ProtocolTest.java'),str(ROOT/'tests/SharedFramesTest.java')],check=True)
+            files=[ROOT/'fabric/src/main/java/dev/minemakers/bridge'/f for f in ('Wire.java','BlockDamage.java','DesktopInput.java','HostPose.java','FramePacer.java','OverlayFrames.java','SharedOverlayWriter.java','PoseTimeline.java')]
+            subprocess.run([javac,'--release','21','-d',str(d),*[str(p) for p in files],str(ROOT/'tests/ProtocolTest.java'),str(ROOT/'tests/SharedFramesTest.java'),str(ROOT/'tests/CameraTimelineTest.java')],check=True)
             subprocess.run([java,'-cp',str(d),'ProtocolTest',str(d)],check=True)
+            subprocess.run([java,'-cp',str(d),'CameraTimelineTest'],check=True)
             import time
             mapping=None; samples=0; last=0
             process=subprocess.Popen([java,'-cp',str(d),'SharedFramesTest',str(d/'overlay.shared')])

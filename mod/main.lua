@@ -3,6 +3,7 @@ local W=tm.os.DoFile('wire')
 local C=tm.os.DoFile('config')
 local Locomotion=tm.os.DoFile('locomotion')
 local motion=nil
+local motionEpoch=0
 local control=nil
 local lookBaseline=nil
 local keymap={}
@@ -26,7 +27,11 @@ local renderScene=nil
 local updateCount,statusSince=0,0
 local updateRate=0
 local lastCameraAttempt=-100
-tm.os.SetModTargetDeltaTime(C.updateInterval or 1/60)
+local schedulingOk,schedulingError=pcall(tm.os.SetModTargetDeltaTime,C.updateInterval or 0)
+if not schedulingOk then
+    tm.os.SetModTargetDeltaTime(1/60) -- retain the working rate on builds that reject zero
+    issues['update scheduling']=tostring(schedulingError)
+end
 local anchor=nil
 local objects,entities,avatar={},{},{}
 local nativeTargets,activeTargets={},{}
@@ -95,6 +100,10 @@ local function ray(origin,direction,distance)
     local at=hit.GetHitPosition()
     return {distance=math.sqrt((at.x-start.x)^2+(at.y-start.y)^2+(at.z-start.z)^2)}
 end
+local function presentedView()
+    if not desktopInput or not desktopInput.active or not lookBaseline or desktopSession~=lookBaseline.session or tm.os.GetRealtimeSinceStartup()-desktopFresh>0.25 then return nil end
+    return desktopInput.view
+end
 local function applyView(p)
     if not linked or not p then return end
     attempt('native follow',function()
@@ -102,8 +111,10 @@ local function applyView(p)
         t.SetPosition(world(p.pos)); t.SetRotation(V(0,p.yaw,0))
     end)
     if C.firstPerson==false then return end
-    local eye=world(point(p.pos.x,p.pos.y+(p.eyeHeight or 1.62),p.pos.z))
-    local yaw=p.yaw*math.pi/180; local pitchRad=p.pitch*math.pi/180
+    local displayed=presentedView()
+    local eye=displayed and world(displayed.eye) or world(point(p.pos.x,p.pos.y+(p.eyeHeight or 1.62),p.pos.z))
+    local yaw=(displayed and displayed.yaw or p.yaw)*math.pi/180
+    local pitchRad=(displayed and displayed.pitch or p.pitch)*math.pi/180
     local direction=V(math.sin(yaw)*math.cos(pitchRad),-math.sin(pitchRad),math.cos(yaw)*math.cos(pitchRad))
     if not camera then
         local now=tm.os.GetRealtimeSinceStartup()
@@ -224,7 +235,7 @@ local function commit(rows,newSession)
             if e.id>lastEvent then
                 -- At-most-once effects, including retries after an engine force call fails.
                 lastEvent=e.id
-                if e.teleport then motion:teleport(e.teleport)
+                if e.teleport then motion:teleport(e.teleport); motionEpoch=motionEpoch+1
                 elseif e.push then motion.vx=motion.vx+e.push.x; motion.vy=motion.vy+e.push.y; motion.vz=motion.vz+e.push.z end
                 local b=e.target and nativeTargets[e.target]
                 if b and b.Exists() and not b.IsDead() then
@@ -401,6 +412,8 @@ local function readDesktop(now)
     for _,r in ipairs(frame.records) do
         if r[1]=='ACTIVE' then next.active=r[2]=='1'
         elseif r[1]=='POINTER' and #r==5 then next.x=W.number(r[2]); next.y=W.number(r[3])
+        elseif r[1]=='VIEW' and #r==9 and r[2]==mcSession then
+            next.view={sequence=W.number(r[3]),eye=pos(r[4],r[5],r[6]),yaw=W.number(r[7]),pitch=W.number(r[8]),fov=W.number(r[9])}
         elseif r[1]=='HELD' and #r==2 then next.held[W.number(r[2])]=true end
     end
     desktopInput=next; desktopFresh=now; desktopSession=frame.session; desktopSeq=frame.sequence
@@ -449,6 +462,7 @@ local function write()
         rows[#rows+1]={'LINK',mcSession}
         rows[#rows+1]={'ACK',lastEvent}
         rows[#rows+1]={'CAMERA_FOV',C.cameraFov or 60}
+        rows[#rows+1]={'POSE_CLOCK',lastUpdate or tm.os.GetRealtimeSinceStartup(),motionEpoch}
         rows[#rows+1]={'HOST_POSE',motion.pos.x,motion.pos.y,motion.pos.z,player.yaw,player.pitch,motion.grounded and 1 or 0,motion.flying and 1 or 0,motion.crouch and 1 or 0}
         rows[#rows+1]={'INPUT',flag('w'),flag('s'),flag('a'),flag('d'),flag('space'),flag('left shift'),flag('f'),flag('g'),yaw,pitch,0,slot}
         local now=tm.os.GetRealtimeSinceStartup()
@@ -513,7 +527,7 @@ function update()
         lastStatus=now
         updateRate=updateCount/math.max(0.001,now-statusSince); updateCount=0; statusSince=now
         local state=cameraError~='' and ('camera error: '..cameraError) or (camera and 'first-person API active' or 'camera waiting')
-        local lines={'MineMakers 0.4.0 | player '..C.playerId..' | '..state,
+        local lines={'MineMakers 0.4.1 | player '..C.playerId..' | '..state,
             'Host movement: '..tostring(linked)..' | control age: '..(now-controlFresh),
             'Host session: '..session..' | Minecraft session: '..tostring(mcSession),
             'Startup error: '..(startupError~='' and startupError or 'none'),
@@ -522,7 +536,7 @@ function update()
             'Scene error: '..(sceneError~='' and sceneError or 'none'),
             'Movement error: '..(movementError~='' and movementError or 'none'),
             'Host write error: '..(writeError~='' and writeError or 'none'),
-            string.format('Lua updates: %.1f/s',updateRate)}
+            string.format('Lua updates: %.1f/s | camera: %s',updateRate,presentedView() and 'presented Minecraft frame' or 'host motion')}
         for name,problem in pairs(issues) do lines[#lines+1]='API '..name..': '..problem end
         pcall(tm.os.WriteAllText_Dynamic,'minemakers-status.txt',table.concat(lines,'\n')..'\n')
     end

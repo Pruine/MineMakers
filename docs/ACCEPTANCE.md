@@ -3,7 +3,7 @@
 Current cloud validation (native Trailmakers and Windows checks remain unrun):
 
 - PASS: full Fabric/Loom Java 21 compile, resource processing and remapped JAR build.
-- PASS: 129 Java protocol and accumulated-damage assertions, including every truncated
+- PASS: 130 Java protocol and accumulated-damage assertions, including every truncated
   prefix of a representative frame, nonfinite numbers, blast hit caps, resistance,
   unbreakable blocks, monotonic cracks, destruction and state reset.
 - PASS: Python/Lua 5.2 tests for protocol framing and Java↔Lua interoperability.
@@ -112,3 +112,28 @@ helper protocol. Capture/mapping-write FPS stayed matched (58.9/58.9 in an inven
 sample). These exercise Minecraft and the simulated native API, not installed
 Trailmakers physics or the Windows compositor. Producer-restart checks also ensure
 mapping epochs advance rather than reusing an in-flight image slot's old epoch.
+
+
+0.4.1 adds jittered-host camera timeline tests: with 30 Hz pose packets and a
+120 Hz render clock, raw copying holds 134 of 179 measured frames; interpolation
+holds zero, with a maximum 0.0360 m render step at 4.317 m/s. Stalls do not predict
+through walls; teleports, reordered poses and session/clock resets are covered.
+The suite runs 21 Python/Lua tests, 130 Java protocol/damage assertions, the camera
+timeline fixture and concurrent full-resolution mapping/producer-restart checks.
+A blocked compositor test verifies that independent input delivery continues.
+Native adapter tests ensure the camera follows presented-image metadata while
+physics advances, rejects another Minecraft session, and releases the override
+when F8 capture ends. A legacy scheduler fixture rejects zero and verifies that
+fallback scheduling does not prevent startup.
+The real client exposed strict rejection of the added VIEW row; the Java parser
+now validates/accepts it, with a regression check for invalid view projection.
+
+The corrected 0.4.1 client was run under Xvfb/Mesa with a simulated native host.
+It continued exporting camera-bearing frames after VIEW feedback, walked while
+turning from 0 to about 43.2 degrees, and produced 101 observed images in a two-second
+trace. All 44 measured interior walking transitions changed camera position.
+After settling, the reflected native camera exactly matched the exported Minecraft
+eye (0.0 m difference), with matching forward direction. Status reported local
+render-frame look, roughly 26.7 ms camera interpolation and no capture error.
+This validates the real Minecraft/mapping/simulated-Lua path; it does not validate
+Win32 GDI presentation or the installed Trailmakers camera scheduler.

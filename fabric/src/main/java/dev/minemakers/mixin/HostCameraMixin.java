@@ -15,9 +15,9 @@ public abstract class HostCameraMixin {
     @Shadow protected abstract void setRotation(float yaw,float pitch);
     @Inject(method="update",at=@At("TAIL"))
     private void minemakers$renderPose(CallbackInfo ci) {
-        if (!OverlayCapture.enabled()) return;
+        if (!HostMotionClient.rendering()) return;
         var eye=HostMotionClient.eye();
-        var pose=HostMotionClient.pose();
+        var pose=HostMotionClient.view();
         if (eye!=null && pose!=null) { setPos(eye.x,eye.y,eye.z); setRotation(pose.yaw(),pose.pitch()); }
     }
 }
